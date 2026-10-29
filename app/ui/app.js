@@ -74,6 +74,7 @@
   // Saved beside the vault (not inside it), so the lock screen already has your theme
   const THEMES = [
     { id: 'kali', name: 'Kali', desc: 'Black and white', bg: '#000000', fg: '#ededed', a: '#367bf0', b: '#ffffff', mono: false, prompt: true },
+    { id: 'kali-light', name: 'Kali Light', desc: 'White and black', bg: '#ffffff', fg: '#1a1a1a', a: '#1f5fd1', b: '#000000', mono: false, prompt: true },
     { id: 'matrix', name: 'Matrix', desc: 'Green on black', bg: '#000000', fg: '#00ff41', a: '#00ff41', b: '#7dffa0', mono: true, prompt: true },
     { id: 'amber', name: 'Amber', desc: 'Retro amber', bg: '#0c0800', fg: '#ffb000', a: '#ffb000', b: '#ffd166', mono: true, prompt: true },
     { id: 'midnight', name: 'Midnight', desc: 'Navy and gold', bg: '#0f1e3d', fg: '#ffffff', a: '#27ae60', b: '#f5c518', mono: false, prompt: false },
@@ -250,6 +251,7 @@
     D = Vault.data;
     D.friends = D.friends || {}; D.blocked = D.blocked || {}; D.outbox = D.outbox || {};
     if (D.settings.notify === undefined) { D.settings.notify = true; D.settings.previews = true; }
+    if (D.settings.panicCode === 'Tab') { D.settings.panicCode = 'Escape'; Vault.save(); }   // Tab moves between buttons, so it can't be the black-out key
     S.unlocked = true;
     if (D.server !== PwcConfig.SERVER) { D.server = PwcConfig.SERVER; Vault.save(); }
     S.box = P.createBox(D.me, D.keys.ecdhPriv);
@@ -948,6 +950,7 @@
         const grab = async e => {
           if (!S.capturing) { window.removeEventListener('keydown', grab, true); return; }   // the dialog was closed
           if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock'].includes(e.key) || !e.code) return;
+          if (e.code === 'Tab') { e.preventDefault(); e.stopPropagation(); keyNote.className = 'err'; keyNote.textContent = "Tab moves between buttons, so it can't be the black-out key. Press another key."; return; }
           e.preventDefault(); e.stopPropagation();
           window.removeEventListener('keydown', grab, true);
           S.capturing = false;
@@ -1012,7 +1015,7 @@
       themePicker(),
 
       h('h3', { text: 'Black-out key' }),
-      h('p', { class: 'hint' }, 'Press it and privatewebchat instantly goes completely black. To come back, type your PIN on the black screen and press Enter. Nothing shows while you type.'),
+      h('p', { class: 'hint' }, 'Press it and privatewebchat instantly goes completely black. To come back, press the same key again, or type your PIN on the black screen and press Enter. Nothing shows while you type.'),
       h('div', { class: 'row', style: 'margin-top:0' }, h('span', {}, 'Key: '), kbd, change),
       h('label', { class: 'check' }, global, h('span', {}, 'Also works when privatewebchat is in the background', h('small', { class: 'hint', style: 'display:block;margin:0' }, "privatewebchat takes the key over in every app, so pick one you don't use, like F9."))),
       keyNote,
@@ -1113,14 +1116,23 @@
     if (S.view !== 'friends') $('msg').focus();
   }
   const dots = () => { $('blackDots').textContent = '•'.repeat($('blackPin').value.length); };
-  window.PwcPanic = blackout;
+  // The black-out key turns it off again too, but not after the window was closed to the tray:
+  // that still takes the PIN
+  let lastToggle = 0;
+  function toggleBlack() {
+    if (Date.now() - lastToggle < 300) return;   // the page and the background key can both see one press
+    lastToggle = Date.now();
+    if (!S.black) blackout();
+    else if (!S.away) unblack();
+  }
+  window.PwcPanic = toggleBlack;
   // Closing the window keeps privatewebchat running in the background: it comes back blacked out, so
   // it takes the PIN to see anything, but notifications keep coming meanwhile
   window.PwcAway = () => { blackout(); if (S.black) S.away = true; };
   // The black-out key is checked before anything else on the page sees it
   window.addEventListener('keydown', e => {
-    if (!S.unlocked || S.black || S.capturing || !D.settings.panicCode) return;
-    if (e.code === D.settings.panicCode && !e.ctrlKey && !e.metaKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); blackout(); }
+    if (!S.unlocked || S.capturing || !D.settings.panicCode) return;
+    if (e.code === D.settings.panicCode && !e.ctrlKey && !e.metaKey && !e.altKey && !e.repeat) { e.preventDefault(); e.stopPropagation(); toggleBlack(); }
   }, true);
   $('panicBtn').onclick = blackout;
   $('black').addEventListener('mousedown', e => { e.preventDefault(); $('blackPin').focus(); });

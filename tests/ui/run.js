@@ -343,7 +343,17 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.fill('#blackPin', '1234');
   await maya.js(`$('blackPin').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
   await maya.until(`$('black').classList.contains('hidden') && !$('sMain').classList.contains('hidden')`, 'back from black-out');
-  console.log('✓ black-out key hides everything; only the PIN brings it back');
+  // The same key turns it off again; Tab never blacks out
+  await sleep(400);
+  await maya.key('Escape', 'Escape', 27);
+  await maya.until(`!$('black').classList.contains('hidden')`, 'black-out again');
+  await sleep(400);
+  await maya.key('Escape', 'Escape', 27);
+  await maya.until(`$('black').classList.contains('hidden') && !$('sMain').classList.contains('hidden')`, 'back with the same key');
+  await maya.key('Tab', 'Tab', 9);
+  await sleep(300);
+  assert(await maya.js(`return $('black').classList.contains('hidden')`), 'Tab does not black out');
+  console.log('✓ black-out key hides everything; the PIN or the same key brings it back');
 
   // ── PIN on launch ──
   await maya.reload();
