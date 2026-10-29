@@ -1,6 +1,6 @@
 #!/bin/sh
 # Builds privatewebchat.app with Chromium inside (CEF, Chromium Embedded Framework) for Apple Silicon
-# Macs, plus dist/privatewebchat-mac.zip to share.
+# Macs, plus dist/privatewebchat.dmg to share.
 # Needs the Xcode command line tools (xcode-select --install). The first run downloads CEF
 # (about 130 MB) into vendor/cef.
 # PWC_SELFTEST=1 builds a test copy for this Mac in build/selftest (used by tools/selftest.sh).
@@ -25,7 +25,7 @@ helper_plist() {
   <key>CFBundleExecutable</key><string>$1</string>
   <key>CFBundleIdentifier</key><string>app.privatewebchat.desktop.helper$2</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.3</string>
+  <key>CFBundleShortVersionString</key><string>1.1.4</string>
   <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
@@ -88,7 +88,12 @@ for H in "$APP"/Contents/Frameworks/*.app "$APP/Contents/Frameworks/Chromium Emb
 done
 codesign --force -s - "$APP"
 if [ -z "$PWC_SELFTEST" ]; then
-  rm -f "dist/$NAME-mac.zip"
-  (cd "$OUT" && ditto -c -k --keepParent "$NAME.app" "../$NAME-mac.zip")
-  ls -lh "dist/$NAME-mac.zip"
+  # A disk image with the app beside a link to Applications, to drag it across
+  rm -rf build/dmg "dist/$NAME.dmg" "dist/$NAME-mac.zip"
+  mkdir -p build/dmg
+  ditto "$APP" "build/dmg/$NAME.app"
+  ln -s /Applications build/dmg/Applications
+  hdiutil create -quiet -volname "$NAME" -srcfolder build/dmg -fs HFS+ -format UDZO "dist/$NAME.dmg"
+  rm -rf build/dmg
+  ls -lh "dist/$NAME.dmg"
 fi

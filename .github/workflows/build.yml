@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: app/build-mac.sh
       - uses: actions/upload-artifact@v4
-        with: { name: privatewebchat-mac, path: app/dist/privatewebchat-mac.zip }
+        with: { name: privatewebchat-mac, path: app/dist/privatewebchat.dmg }
   windows:
     runs-on: windows-2022
     steps:
@@ -21,14 +21,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - run: app\build-windows.bat
         shell: cmd
-      - run: Compress-Archive -Path app/dist/privatewebchat.exe -DestinationPath app/dist/privatewebchat-windows.zip
-        shell: pwsh
       - uses: actions/upload-artifact@v4
-        with:
-          name: privatewebchat-windows
-          path: |
-            app/dist/privatewebchat.exe
-            app/dist/privatewebchat-windows.zip
+        with: { name: privatewebchat-windows, path: app/dist/privatewebchat.exe }
   tests:
     runs-on: macos-14
     steps:
@@ -45,5 +39,6 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with: { path: out, merge-multiple: true }
+      - run: cd out && sha256sum * > SHA256SUMS.txt
       - uses: softprops/action-gh-release@v2
         with: { files: 'out/*' }

@@ -35,14 +35,14 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 
 1. Download the app from [**Releases**](../../releases/latest):
 
-   | | Download | Also available as |
-   |---|---|---|
-   | **Windows 10 / 11** | [`privatewebchat.exe`](../../releases/latest/download/privatewebchat.exe) | [`privatewebchat-windows.zip`](../../releases/latest/download/privatewebchat-windows.zip) (the same .exe in a zip) |
-   | **Mac (Apple Silicon, macOS 12+)** | [`privatewebchat-mac.zip`](../../releases/latest/download/privatewebchat-mac.zip) | |
+   | | Download |
+   |---|---|
+   | **Windows 10 / 11** | [`privatewebchat.exe`](../../releases/latest/download/privatewebchat.exe) |
+   | **Mac (Apple Silicon, macOS 12+)** | [`privatewebchat.dmg`](../../releases/latest/download/privatewebchat.dmg) |
 
    Intel Macs aren't supported.
-2. Open it (on Mac, unzip it first). The first time, your computer will warn that the app isn't from an identified developer:
-   - **Mac:** right-click the app → **Open** → **Open**
+2. Open it. On Mac, open the .dmg and drag privatewebchat into Applications. The first time, your computer will warn that the app isn't from an identified developer:
+   - **Mac:** right-click the app → **Open** → **Open**. If there's no Open button, go to **System Settings → Privacy & Security** and click **Open Anyway**
    - **Windows:** **More info** → **Run anyway**
 3. Paste your invite code, then pick a username and a PIN.
 
@@ -51,7 +51,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 Every release lists a `SHA256SUMS.txt` with a checksum for each file. If your file's checksum matches, it's exactly the file that was published:
 
 - **Windows** (PowerShell): `Get-FileHash privatewebchat.exe`
-- **Mac** (Terminal): `shasum -a 256 privatewebchat-mac.zip`
+- **Mac** (Terminal): `shasum -a 256 privatewebchat.dmg`
 
 The app is built from the code in this repository: `app/build-windows.sh` and `app/build-mac.sh`.
 

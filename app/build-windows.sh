@@ -1,6 +1,5 @@
 #!/bin/sh
-# Cross-builds dist/privatewebchat.exe on a Mac or Linux with MinGW (brew install mingw-w64), plus
-# dist/privatewebchat-windows.zip with the same .exe inside, for people who'd rather download a zip.
+# Cross-builds dist/privatewebchat.exe on a Mac or Linux with MinGW (brew install mingw-w64).
 set -e
 cd "$(dirname "$0")"
 mkdir -p build dist
@@ -20,5 +19,4 @@ x86_64-w64-mingw32-windres --include-dir=. win/app.rc -O coff -o build/app-res.o
 $CXX -static -mwindows -o dist/privatewebchat.exe build/webview-win.o build/main-win.o build/platform_win.o build/app-res.o \
   -lws2_32 -lbcrypt -lcrypt32 -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion
 rm -f dist/privatewebchat-windows.zip
-(cd dist && zip -q -X privatewebchat-windows.zip privatewebchat.exe)
-ls -lh dist/privatewebchat.exe dist/privatewebchat-windows.zip
+ls -lh dist/privatewebchat.exe
