@@ -23,6 +23,10 @@ const QUEUE_TTL = 14 * 24 * 3600000;       // dropped after 14 days, or sooner i
 const live = (e, t) => t < (e.exp || e.at + QUEUE_TTL);
 const MAX_RECIPIENTS = 500, MAX_CT = 96000, MAX_DIR = 2000;
 const AUTH_TIMEOUT_MS = 20000;
+// Apps from before 1.1.5 can't update themselves (and don't say their version): they're told to,
+// in their message box, when they connect and at most every 10 minutes when they send
+const OUTDATED = 'A new version of privatewebchat is out. Download it from github.com/gronkreeks/privatewebchat/releases/latest. After that, privatewebchat updates itself whenever it opens.';
+const OUTDATED_EVERY = 10 * 60000;
 
 const ownerOk = P.isB64(OWNER_KEY, P.PUB, P.PUB);
 const members = new Map();      // id -> { cert, info, vouched }
@@ -144,11 +148,13 @@ async function handle(ws, m) {
     const old = online.get(info.id);
     if (old && old !== ws) { send(old, { t: 'replaced' }); old.close(4001, 'replaced'); }
     ws.member = info; online.set(info.id, ws);
+    ws.version = typeof m.v === 'string' ? m.v.slice(0, 20) : null;
     send(ws, {
       t: 'welcome', id: info.id, dir: [...members.values()].map(x => x.cert),
       removals: removals.v ? removals : null, online: [...online.keys()],
     });
     broadcast({ t: 'presence', id: info.id, on: true }, info.id);
+    outdated(ws);
     const t0 = now();
     for (const env of queues.get(info.id) || []) if (live(env, t0)) send(ws, env);
     return;
@@ -165,10 +171,17 @@ async function handle(ws, m) {
       for (const id of to) deliver(id, { t: 'env', eid: (++envSeq).toString(36) + '.' + crypto.randomBytes(3).toString('hex'), from: me.id, iv: m.iv, ct: m.ct, key: m.keys[id], at: t, exp: t + ttl });
       send(ws, { t: 'sent', ref: m.ref, at: t, n: to.length });
       if (to.length) save();
+      outdated(ws);
       break;
     }
     case 'ack': ack(me.id, m.eids); break;
   }
+}
+function outdated(ws) {
+  const t = now();
+  if (ws.version || t - (ws.toldOutdated || 0) < OUTDATED_EVERY) return;
+  ws.toldOutdated = t;
+  send(ws, { t: 'error', msg: OUTDATED });
 }
 function deny(ws, msg, why) { send(ws, { t: 'denied', msg, why }); ws.close(4000, why); }
 

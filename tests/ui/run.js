@@ -17,13 +17,24 @@ const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/M
 const UI_PORT = 18900, RELAY_PORT = 18901, CDP_PORT = 18902;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const procs = [];
+const VERSION = require('../../app/ui/config.js').VERSION;
+// What the stand-in for GitHub's releases API says is the newest release
+const release = { tag: 'v' + VERSION, body: '## Replies\n- Hover over a message and click **Reply**\n- ASCII GIFs' };
 
 // ── The UI, served the way the app serves it, with mock.js added ──
 function serveUi() {
   const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript' };
   return new Promise(res => http.createServer((req, rsp) => {
+    if (req.url.startsWith('/releases/')) {
+      const tag = req.url === '/releases/latest' ? release.tag : req.url.slice('/releases/tags/'.length);
+      rsp.writeHead(200, { 'Content-Type': 'application/json' });
+      return rsp.end(JSON.stringify({ tag_name: tag, body: release.body }));
+    }
     const name = path.basename(req.url.split('?')[0]) || 'index.html';
-    if (name === 'config.js') { rsp.writeHead(200, { 'Content-Type': 'text/javascript' }); return rsp.end(`const PwcConfig = { SERVER: 'ws://127.0.0.1:${RELAY_PORT}' };`); }
+    if (name === 'config.js') {
+      rsp.writeHead(200, { 'Content-Type': 'text/javascript' });
+      return rsp.end(`const PwcConfig = { SERVER: 'ws://127.0.0.1:${RELAY_PORT}', VERSION: '${VERSION}', UPDATES: 'http://127.0.0.1:${UI_PORT}/releases' };`);
+    }
     const file = name === 'mock.js' ? path.join(__dirname, 'mock.js') : path.join(UI, name);
     if (!fs.existsSync(file)) { rsp.writeHead(404); return rsp.end(); }
     let body = fs.readFileSync(file);
@@ -403,7 +414,8 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert(await maya.js(`return $('black').classList.contains('hidden')`), 'Tab does not black out');
   console.log('✓ black-out key hides everything; pressing it again asks for the PIN, only the PIN brings it back');
 
-  // ── PIN on launch ──
+  // ── PIN on launch, and What's new after an update ──
+  await maya.js(`Vault.data.settings.seenVersion = '1.0.0'; await Vault.saveNow()`);
   await maya.reload();
   await maya.until(`!$('sUnlock').classList.contains('hidden')`, 'unlock screen');
   await maya.fill('#unlockPin', '9999');
@@ -412,12 +424,31 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.fill('#unlockPin', '1234');
   await maya.click('#unlockGo');
   await maya.until(`!$('sMain').classList.contains('hidden')`, 'unlocked');
+  await maya.until(`$('modalCard').textContent.includes("What's new in privatewebchat ${VERSION}") && $('modalCard').querySelector('li') && $('modalCard').textContent.includes('click Reply')`, "What's new after an update");
+  await maya.clickText('Close');
   await online(maya);
   await nav(maya, 'Weekend plans');
   assert((await lastMsg(maya)).includes('see you there'), 'history survives a restart');
   await tab(maya, 'all'); await nav(maya, 'Friends');
   assert(await maya.js(`return $('friendsBody').textContent.includes('leo')`), 'friends survive a restart');
-  console.log('✓ PIN required on launch, history and friends kept');
+  console.log("✓ PIN required on launch, history and friends kept; What's new shown once after an update");
+
+  // ── Opening privatewebchat when there's a newer release updates it first ──
+  release.tag = 'v9.9.9'; release.body = '## New\n- Flying cars\n- Faster everything';
+  const upd = await newPage('upd');
+  await upd.size(1100, 700);
+  await upd.goto(url);
+  await upd.until(`!$('sUpdate').classList.contains('hidden') && window.__installed`, 'updates itself on opening');
+  assert.strictEqual(await upd.js(`return window.__update`), 'v9.9.9', 'asked for the newest release');
+  assert(await upd.js(`return $('updTitle').textContent.includes('9.9.9') && $('updNotes').textContent.includes('Flying cars')`), 'patch notes shown');
+  await upd.js(`sessionStorage.setItem('mock-updfail', '1'); window.__installed = false`);
+  await upd.reload();
+  await upd.until(`!$('updRow').classList.contains('hidden') && $('updStatus').textContent.includes('try again next time')`, 'a failed update says so');
+  assert(!(await upd.js(`return window.__installed`)), 'nothing installed after a failed download');
+  await upd.click('#updSkip');
+  await upd.until(`!$('sWelcome').classList.contains('hidden')`, 'opens normally after a failed update');
+  release.tag = 'v' + VERSION;
+  console.log('✓ opening privatewebchat installs a newer release first, with its patch notes; a failed update still opens');
 
   // ── A server restart deletes every message, for everyone, including ones not yet delivered ──
   await leo.reload();

@@ -329,3 +329,10 @@ pre.gif { font-family: var(--mono); font-size: 0.78rem; line-height: 1.2; color:
 .textlink { background: none; border: none; color: var(--faint); font-family: inherit; font-size: 0.74rem; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 .textlink:hover { color: var(--muted); }
 .ico svg { width: 18px; height: 18px; vertical-align: middle; }
+
+/* Patch notes: on the updating screen and in What's new */
+.notes { max-height: 46vh; overflow-y: auto; font-size: 0.84rem; line-height: 1.55; margin-top: 0.4rem; }
+.notes h3 { margin: 0.9rem 0 0.35rem; }
+.notes p, .notes li { color: var(--text); margin: 0.2rem 0; }
+.notes ul { padding-left: 1.2rem; margin: 0.2rem 0 0.5rem; }
+#sUpdate .brand { margin-bottom: 1rem; }

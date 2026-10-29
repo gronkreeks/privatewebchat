@@ -17,6 +17,6 @@ $CC $FLAGS -std=gnu11 -c src/main.c -o build/main-win.o
 $CC $FLAGS -std=gnu11 -c src/platform_win.c -o build/platform_win.o
 x86_64-w64-mingw32-windres --include-dir=. win/app.rc -O coff -o build/app-res.o
 $CXX -static -mwindows -o dist/privatewebchat.exe build/webview-win.o build/main-win.o build/platform_win.o build/app-res.o \
-  -lws2_32 -lbcrypt -lcrypt32 -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion
+  -lws2_32 -lbcrypt -lcrypt32 -ladvapi32 -lole32 -lshell32 -lshlwapi -luser32 -lversion -lurlmon
 rm -f dist/privatewebchat-windows.zip
 ls -lh dist/privatewebchat.exe

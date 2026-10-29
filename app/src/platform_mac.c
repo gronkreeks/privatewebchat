@@ -4,17 +4,24 @@
 // runtime so this stays plain C.
 #include "platform.h"
 #include <Carbon/Carbon.h>
+#include <CommonCrypto/CommonDigest.h>
 #include <Security/Security.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
+#include <mach-o/dyld.h>
 #include <objc/message.h>
 #include <objc/runtime.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+extern char **environ;
 
 // ──────────── Files ────────────
 static char dir[1024];
@@ -167,6 +174,87 @@ char *plat_paste(void) {
   return u ? strdup(u) : NULL;
 }
 void plat_fatal(const char *msg) { fprintf(stderr, "%s\n", msg); }
+
+// ──────────── Updates ────────────
+// Runs a program and waits for it (detach: starts it in its own session and doesn't wait, so it
+// outlives privatewebchat). Returns its exit status, or -1.
+static int run(char *const argv[], int detach) {
+  posix_spawnattr_t at;
+  posix_spawnattr_init(&at);
+  if (detach) posix_spawnattr_setflags(&at, POSIX_SPAWN_SETSID);
+  pid_t pid;
+  int err = posix_spawn(&pid, argv[0], NULL, &at, argv, environ);
+  posix_spawnattr_destroy(&at);
+  if (err) return -1;
+  if (detach) return 0;
+  int st;
+  while (waitpid(pid, &st, 0) < 0) if (errno != EINTR) return -1;
+  return WIFEXITED(st) ? WEXITSTATUS(st) : -1;
+}
+int plat_download(const char *url, const char *name) {
+  char p[1200], part[1210];
+  path_for(name, p, sizeof p);
+  snprintf(part, sizeof part, "%s.part", p);
+  char *argv[] = { "/usr/bin/curl", "-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "1800", "-o", part, (char *)url, NULL };
+  if (run(argv, 0) != 0 || rename(part, p)) { unlink(part); return -1; }
+  return 0;
+}
+int plat_sha256(const char *name, unsigned char out[32]) {
+  char p[1200];
+  path_for(name, p, sizeof p);
+  FILE *f = fopen(p, "rb");
+  if (!f) return -1;
+  CC_SHA256_CTX c;
+  CC_SHA256_Init(&c);
+  unsigned char buf[65536];
+  size_t n;
+  while ((n = fread(buf, 1, sizeof buf, f)) > 0) CC_SHA256_Update(&c, buf, (CC_LONG)n);
+  int bad = ferror(f);
+  fclose(f);
+  CC_SHA256_Final(out, &c);
+  return bad ? -1 : 0;
+}
+// Once privatewebchat has quit, a little script swaps the app from the disk image in for this one and
+// opens it. If anything goes wrong, the old app is put back and opened instead.
+static const char *SWAP =
+  "while kill -0 \"$3\" 2>/dev/null; do sleep 0.2; done\n"
+  "m=$(mktemp -d /tmp/privatewebchat-update.XXXXXX) || { open \"$1\"; exit 1; }\n"
+  "if hdiutil attach -quiet -nobrowse -noautoopen -readonly -mountpoint \"$m\" \"$2\"; then\n"
+  "  if [ -d \"$m/privatewebchat.app\" ] && rm -rf \"$1.old\" && mv \"$1\" \"$1.old\"; then\n"
+  "    if ditto \"$m/privatewebchat.app\" \"$1\"; then rm -rf \"$1.old\"; else rm -rf \"$1\"; mv \"$1.old\" \"$1\"; fi\n"
+  "  fi\n"
+  "  hdiutil detach -quiet \"$m\"\n"
+  "fi\n"
+  "rmdir \"$m\"; rm -f \"$2\"\n"
+  "xattr -dr com.apple.quarantine \"$1\" 2>/dev/null\n"
+  "open \"$1\"\n";
+int plat_update_install(const char *name) {
+  char dmg[1200], exe[PATH_MAX], real[PATH_MAX], pid[24];
+  path_for(name, dmg, sizeof dmg);
+  uint32_t size = sizeof exe;
+  // The app is the folder around Contents/MacOS/privatewebchat
+  char *app = NULL, *cut;
+  if (!_NSGetExecutablePath(exe, &size) && realpath(exe, real) && (cut = strstr(real, ".app/Contents/MacOS/"))) { cut[4] = 0; app = real; }
+  // Opened straight from the disk image, or moved somewhere macOS keeps read-only: open the disk image
+  // so it can be dragged into Applications by hand
+  int ok = app && !strstr(app, "/AppTranslocation/") && strncmp(app, "/Volumes/", 9) && !access(app, W_OK);
+  if (ok) {
+    char parent[PATH_MAX];
+    snprintf(parent, sizeof parent, "%s", app);
+    char *slash = strrchr(parent, '/');
+    if (slash && slash != parent) *slash = 0;
+    ok = !access(parent, W_OK);
+  }
+  if (!ok) {
+    char *argv[] = { "/usr/bin/open", dmg, NULL };
+    run(argv, 0);
+    return 1;
+  }
+  snprintf(pid, sizeof pid, "%d", (int)getpid());
+  char *argv[] = { "/bin/sh", "-c", (char *)SWAP, "sh", app, dmg, pid, NULL };
+  return run(argv, 1) ? 1 : 0;
+}
+void plat_update_cleanup(void) { }   // the swap script tidies up after itself
 
 // ──────────── Notifications (UserNotifications framework) ────────────
 // Only works when running as privatewebchat.app: a bare binary has no bundle identifier, and the framework

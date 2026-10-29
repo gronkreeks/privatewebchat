@@ -34,6 +34,17 @@ void plat_shutdown(void);            // tidy up (the tray icon) before quitting
 void plat_copy(const char *text);
 char *plat_paste(void);              // malloc'd clipboard text, or NULL
 void plat_fatal(const char *msg);
+
+// Updates (main.c decides what to fetch and checks it). plat_download saves url to a file in
+// privatewebchat's folder and blocks until it's done, so it runs on its own thread: 0 on success.
+int plat_download(const char *url, const char *name);
+int plat_sha256(const char *name, unsigned char out[32]);   // of a file in privatewebchat's folder, 0 on success
+// Arranges for the downloaded copy (name, in privatewebchat's folder) to replace this one and start as
+// soon as privatewebchat quits: returns 0, and the caller quits. Returns 1 when privatewebchat can't
+// replace itself (opened from the disk image, or from a folder it can't write to): the download is
+// shown instead, to install by hand.
+int plat_update_install(const char *name);
+void plat_update_cleanup(void);   // removes what an earlier update left behind (Windows: the old .exe)
 #ifdef PWC_SELFTEST
 const char *plat_debug_menu(void);
 #endif

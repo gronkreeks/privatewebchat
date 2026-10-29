@@ -35,7 +35,7 @@
     for (const k of kids.flat(Infinity)) if (k != null && k !== false) e.append(k.nodeType ? k : String(k));
     return e;
   }
-  const screens = ['sWelcome', 'sSetPin', 'sUnlock', 'sGone', 'sMain'];
+  const screens = ['sWelcome', 'sSetPin', 'sUnlock', 'sUpdate', 'sGone', 'sMain'];
   function show(id) { for (const s of screens) $(s).classList.toggle('hidden', s !== id); const f = $(id).querySelector('input, textarea'); if (f) setTimeout(() => f.focus(), 30); }
   const err = (id, t, ok) => { $(id).textContent = t || ''; $(id).classList.toggle('ok', !!ok); };
   const hue = s => { let x = 0; for (const c of s) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 360; };
@@ -120,6 +120,7 @@
   async function boot() {
     try { await Vault.load(); } catch (e) { return gone("privatewebchat couldn't start", "It couldn't read its data folder."); }
     applyTheme(Vault.theme);
+    if (await autoUpdate()) return;
     if (!Vault.exists) return show('sWelcome');
     try {
       if (await Vault.orphaned()) return gone("This device's data can't be opened", "privatewebchat's key for this computer is missing (for example after moving the data to another computer or Windows account), so the messages stored here can never be decrypted. Erase them to start again.");
@@ -131,6 +132,71 @@
     $('goneErase').classList.toggle('hidden', !!noErase);
     show('sGone');
   }
+
+  // ── Updates ──
+  // Every time privatewebchat opens it asks GitHub for the newest release. If it's newer, it shows the
+  // patch notes while it downloads and installs it (the app checks the file against the release's
+  // checksums), then quits and the new version opens. Offline, or if anything fails, it just opens.
+  const verNum = v => String(v).replace(/^v/, '').split('.').map(n => parseInt(n, 10) || 0);
+  const newer = (a, b) => { const x = verNum(a), y = verNum(b); for (let i = 0; i < 3; i++) if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) > (y[i] || 0); return false; };
+  async function release(which) {
+    const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), 6000);
+    try {
+      const r = await fetch(`${PwcConfig.UPDATES}/${which}`, { signal: ctl.signal, cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
+      const j = r.ok ? await r.json() : null;
+      return j && typeof j.tag_name === 'string' && /^v\d+\.\d+\.\d+$/.test(j.tag_name) ? { tag: j.tag_name, version: j.tag_name.slice(1), notes: typeof j.body === 'string' ? j.body : '' } : null;
+    } catch (e) { return null; } finally { clearTimeout(t); }
+  }
+  // Release notes are Markdown: headings, bullet points and paragraphs come through, everything as plain text
+  function notesView(md) {
+    const out = [];
+    let list = null;
+    for (const raw of String(md).replace(/\r/g, '').split('\n').slice(0, 200)) {
+      const line = raw.replace(/\*\*|__|`/g, '').replace(/\[([^\]]*)\]\([^)]*\)/g, '$1').trim();
+      const item = line.match(/^[-*+]\s+(.*)$/);
+      if (item) { if (!list) out.push(list = h('ul')); list.append(h('li', { text: item[1] })); continue; }
+      list = null;
+      if (!line) continue;
+      const head = line.match(/^#{1,6}\s+(.*)$/);
+      out.push(head ? h('h3', { text: head[1] }) : h('p', { text: line }));
+    }
+    return out.length ? out : [h('p', { text: 'Bug fixes and improvements.' })];
+  }
+  async function autoUpdate() {
+    if (typeof window.pwc_update !== 'function') return false;
+    const rel = await release('latest');
+    if (!rel || !newer(rel.version, PwcConfig.VERSION)) return false;
+    $('updTitle').textContent = `Updating to privatewebchat ${rel.version}`;
+    $('updStatus').textContent = 'Downloading… privatewebchat will open again by itself in a moment.';
+    $('updNotes').replaceChildren(h('h3', { text: "What's new" }), ...notesView(rel.notes));
+    $('updRow').classList.add('hidden');
+    show('sUpdate');
+    let r = null, how = null;
+    try { r = await window.pwc_update(rel.tag); } catch (e) { }
+    if (r && r.ok) {
+      $('updStatus').textContent = 'Installing…';
+      try { how = await window.pwc_update_install(); } catch (e) { }
+      if (how === 'quit') return true;
+    }
+    $('updStatus').textContent = how === 'manual'
+      ? (/Win/.test(navigator.userAgent) ? "privatewebchat can't replace itself in the folder it's in. The new version is in the window that just opened: move it to where this one is, then open it."
+        : "privatewebchat can't replace itself where it is. The new version just opened in Finder: drag privatewebchat into Applications, then open it from there.")
+      : `${(r && r.err) || "Couldn't update."} privatewebchat will try again next time it opens.`;
+    $('updRow').classList.remove('hidden');
+    await new Promise(res => { $('updSkip').onclick = res; });
+    return false;
+  }
+  // After an update, the first unlock shows what changed
+  async function whatsNew() {
+    const seen = D.settings.seenVersion;
+    if (seen === PwcConfig.VERSION) return;
+    D.settings.seenVersion = PwcConfig.VERSION; Vault.save();
+    if (seen && !newer(PwcConfig.VERSION, seen)) return;
+    const rel = await release('tags/v' + PwcConfig.VERSION);
+    if (!rel || !S.unlocked || S.black || !$('modal').classList.contains('hidden')) return;
+    modal(`What's new in privatewebchat ${rel.version}`, h('div', { class: 'notes' }, notesView(rel.notes)), closeBtn());
+  }
+
   $('goneErase').onclick = () => ask('Erase this device?', 'This deletes everything privatewebchat has stored on this computer: your identity, messages and settings. It cannot be undone.', 'Erase', wipe, true);
 
   // ── Unlock ──
@@ -238,7 +304,7 @@
         pendingInvite: { g: pending.inv.g, k: pending.inv.k },
         rooms: { general: { id: 'general', kind: 'general', name: 'General' } }, msgs: {}, unread: {},
         friends: {}, blocked: {},
-        settings: { panicCode: 'Escape', panicGlobal: false, notify: true, previews: true, wipeSet: false },
+        settings: { panicCode: 'Escape', panicGlobal: false, notify: true, previews: true, wipeSet: false, seenVersion: PwcConfig.VERSION },
       });
       await window.pwc_pin_result(true);
       pending = null;
@@ -267,6 +333,7 @@
     show('sMain');
     render();
     connect();
+    whatsNew();
   }
   // Adds a member we've been told about, after checking their certificate ourselves
   async function learn(cert, quiet) {
@@ -377,7 +444,7 @@
         }
         S.boot = m.boot || null;
         if (S.boot && D.serverBoot !== S.boot) { if (D.serverBoot) clearHistory(); D.serverBoot = S.boot; await Vault.saveNow(); }
-        wsSend({ t: 'auth', cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals });
+        wsSend({ t: 'auth', v: PwcConfig.VERSION, cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals });
         break;
       case 'welcome':
         retry = 1500;
@@ -1179,6 +1246,7 @@
       h('h3', { text: 'This device' }),
       h('p', { class: 'hint' }, 'Username: ', h('b', { text: nameOf(D.me) }), " (usernames can't be changed)"),
       h('p', { class: 'hint' }, 'Server: ', h('b', { text: D.server.replace(/^wss:\/\//, '') })),
+      h('p', { class: 'hint' }, 'Version: ', h('b', { text: PwcConfig.VERSION }), ' (updates install themselves when privatewebchat opens)'),
       h('label', { class: 'lbl', text: 'Your safety number' }), h('div', { class: 'box mono', text: mine }),
 
       ownerKey === D.owner ? [
@@ -1220,7 +1288,7 @@
         ['Test a network (open this page in a browser on that network)', 'open tools/nettest.html'],
       ]],
       ['App', [
-        ['Run the tests', 'node tests/protocol.test.js && node tests/server.test.js && node tests/ui/run.js'],
+        ['Run the tests', 'node tests/version.test.js && node tests/protocol.test.js && node tests/server.test.js && node tests/ui/run.js'],
         ['Build the Mac app', 'sh app/build-mac.sh'],
       ]],
     ];

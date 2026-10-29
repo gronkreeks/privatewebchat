@@ -12,6 +12,7 @@
 #include <string.h>
 #include <wchar.h>
 #include <wincrypt.h>
+#include <urlmon.h>
 
 #define PATH_MAX_W 1024
 
@@ -229,6 +230,74 @@ char *plat_paste(void) {
   return out;
 }
 void plat_fatal(const char *msg) { MessageBoxA(NULL, msg, "privatewebchat", MB_OK | MB_ICONERROR); }
+
+// ──────────── Updates ────────────
+int plat_download(const char *url, const char *name) {
+  wchar_t p[PATH_MAX_W], part[PATH_MAX_W], wurl[1024];
+  path_for(name, "", p);
+  path_for(name, ".part", part);
+  if (!MultiByteToWideChar(CP_UTF8, 0, url, -1, wurl, 1024)) return -1;
+  DeleteFileW(part);
+  if (URLDownloadToFileW(NULL, wurl, part, 0, NULL) != S_OK || !MoveFileExW(part, p, MOVEFILE_REPLACE_EXISTING)) { DeleteFileW(part); return -1; }
+  return 0;
+}
+int plat_sha256(const char *name, unsigned char out[32]) {
+  wchar_t p[PATH_MAX_W];
+  path_for(name, "", p);
+  FILE *f = _wfopen(p, L"rb");
+  if (!f) return -1;
+  BCRYPT_ALG_HANDLE alg = NULL;
+  BCRYPT_HASH_HANDLE hh = NULL;
+  int ok = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, NULL, 0) == 0 && BCryptCreateHash(alg, &hh, NULL, 0, NULL, 0, 0) == 0;
+  static unsigned char buf[65536];
+  size_t n;
+  while (ok && (n = fread(buf, 1, sizeof buf, f)) > 0) ok = BCryptHashData(hh, buf, (ULONG)n, 0) == 0;
+  ok = ok && !ferror(f) && BCryptFinishHash(hh, out, 32, 0) == 0;
+  fclose(f);
+  if (hh) BCryptDestroyHash(hh);
+  if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+  return ok ? 0 : -1;
+}
+// A running .exe can't be overwritten but it can be renamed: this one moves aside to privatewebchat.exe.old
+// (deleted at the next start), the new one takes its place and starts, and this one quits.
+static void exe_paths(wchar_t *exe, wchar_t *old) {
+  GetModuleFileNameW(NULL, exe, PATH_MAX_W);
+  swprintf(old, PATH_MAX_W, L"%ls.old", exe);
+}
+int plat_update_install(const char *name) {
+  wchar_t exe[PATH_MAX_W], old[PATH_MAX_W], upd[PATH_MAX_W];
+  exe_paths(exe, old);
+  path_for(name, "", upd);
+  DeleteFileW(old);
+  if (MoveFileExW(exe, old, MOVEFILE_REPLACE_EXISTING)) {
+    if (MoveFileExW(upd, exe, MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+      STARTUPINFOW si = { sizeof si };
+      PROCESS_INFORMATION pi;
+      if (CreateProcessW(exe, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+      return 0;
+    }
+    MoveFileExW(old, exe, 0);
+  }
+  // privatewebchat's folder can't be written to: show the download so it can be swapped in by hand
+  wchar_t args[PATH_MAX_W + 16];
+  swprintf(args, PATH_MAX_W + 16, L"/select,\"%ls\"", upd);
+  ShellExecuteW(NULL, L"open", L"explorer.exe", args, NULL, SW_SHOWNORMAL);
+  return 1;
+}
+// The old copy may still be quitting when the new one starts, so keep trying for a little while
+static DWORD WINAPI cleanup_loop(LPVOID arg) {
+  wchar_t *old = arg;
+  for (int i = 0; i < 40 && GetFileAttributesW(old) != INVALID_FILE_ATTRIBUTES && !DeleteFileW(old); i++) Sleep(500);
+  free(old);
+  return 0;
+}
+void plat_update_cleanup(void) {
+  wchar_t exe[PATH_MAX_W], *old = malloc(PATH_MAX_W * sizeof(wchar_t));
+  if (!old) return;
+  exe_paths(exe, old);
+  HANDLE t = GetFileAttributesW(old) != INVALID_FILE_ATTRIBUTES ? CreateThread(NULL, 0, cleanup_loop, old, 0, NULL) : NULL;
+  if (t) CloseHandle(t); else free(old);
+}
 
 // ──────────── Background panic key ────────────
 static UINT vk_for(const char *c) {

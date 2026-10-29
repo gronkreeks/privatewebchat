@@ -30,15 +30,17 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: cd server && npm ci
-      - run: node tests/protocol.test.js && node tests/server.test.js && NO_SHOTS=1 node tests/ui/run.js
+      - run: node tests/version.test.js && node tests/protocol.test.js && node tests/server.test.js && NO_SHOTS=1 node tests/ui/run.js
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [mac, windows, tests]
     runs-on: ubuntu-latest
     permissions: { contents: write }
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { path: out, merge-multiple: true }
       - run: cd out && sha256sum * > SHA256SUMS.txt
+      # The patch notes (docs/releases/<tag>.md) are what the app shows when it updates itself
       - uses: softprops/action-gh-release@v2
-        with: { files: 'out/*' }
+        with: { files: 'out/*', body_path: 'docs/releases/${{ github.ref_name }}.md' }

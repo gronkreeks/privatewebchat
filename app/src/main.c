@@ -374,6 +374,107 @@ static void b_copy(const char *id, const char *req, void *arg) {
   ret(id, "null");
 }
 
+// ──────────── Updates ────────────
+// The UI finds a newer release when privatewebchat opens and asks for it by tag. Only this repository's
+// releases are downloaded, and only a file whose hash matches the release's SHA256SUMS.txt is installed.
+#define RELEASES "https://github.com/gronkreeks/privatewebchat/releases/download/"
+#ifdef _WIN32
+#define ASSET "privatewebchat.exe"
+#else
+#define ASSET "privatewebchat.dmg"
+#endif
+#define SUMS "SHA256SUMS.txt"
+static volatile int update_busy, update_ready;
+struct update_job { char id[64], tag[24]; const char *result; };
+// v1.2.3
+static int valid_tag(const char *t) {
+  if (!t || *t++ != 'v') return 0;
+  for (int part = 0; part < 3; part++) {
+    int digits = 0;
+    while (*t >= '0' && *t <= '9') { t++; digits++; }
+    if (!digits || digits > 4 || *t++ != (part < 2 ? '.' : 0)) return 0;
+  }
+  return 1;
+}
+// The expected hash of ASSET from a SHA256SUMS.txt ("<64 hex>  <name>" lines). 0 on success.
+static int expected_hash(const char *sums, unsigned char out[32]) {
+  for (const char *l = sums; l && *l; l = strchr(l, '\n') ? strchr(l, '\n') + 1 : NULL) {
+    const char *name = l + 64;
+    size_t n = strcspn(l, "\r\n");
+    if (n < 64 + 2 + strlen(ASSET) || *name != ' ') continue;
+    while (*name == ' ' || *name == '*') name++;
+    if ((size_t)(l + n - name) != strlen(ASSET) || strncmp(name, ASSET, strlen(ASSET))) continue;
+    for (int i = 0; i < 32; i++) {
+      int hi = hexval(l[i * 2]), lo = hexval(l[i * 2 + 1]);
+      if (hi < 0 || lo < 0) return -1;
+      out[i] = (unsigned char)(hi * 16 + lo);
+    }
+    return 0;
+  }
+  return -1;
+}
+static const char *fetch_update(const char *tag) {
+  char url[256];
+  unsigned char want[32], got[32];
+  snprintf(url, sizeof url, RELEASES "%s/" SUMS, tag);
+  if (plat_download(url, SUMS)) return "{\"err\":\"Couldn't download the update.\"}";
+  char *sums = plat_read(SUMS, NULL);
+  plat_remove(SUMS);
+  int listed = sums && !expected_hash(sums, want);
+  free(sums);
+  if (!listed) return "{\"err\":\"That release has no checksum for this computer's download.\"}";
+  snprintf(url, sizeof url, RELEASES "%s/" ASSET, tag);
+  if (plat_download(url, ASSET)) return "{\"err\":\"Couldn't download the update.\"}";
+  if (plat_sha256(ASSET, got) || memcmp(want, got, 32)) { plat_remove(ASSET); return "{\"err\":\"The download didn't match its checksum, so it wasn't installed.\"}"; }
+  update_ready = 1;
+  return "{\"ok\":true}";
+}
+static void update_done(webview_t wv, void *arg) {
+  (void)wv;
+  struct update_job *j = arg;
+  update_busy = 0;
+  ret(j->id, j->result);
+  free(j);
+}
+#ifdef _WIN32
+static DWORD WINAPI update_thread(LPVOID arg) {
+#else
+static void *update_thread(void *arg) {
+#endif
+  struct update_job *j = arg;
+  j->result = fetch_update(j->tag);
+  webview_dispatch(w, update_done, j);
+  return 0;
+}
+// pwc_update(tag): downloads and checks the release. Resolves to {ok: true} or {err: "…"}.
+static void b_update(const char *id, const char *req, void *arg) {
+  (void)arg;
+  char *tag = json_arg(req, 0);
+  struct update_job *j = valid_tag(tag) && strlen(id) < sizeof j->id && !update_busy ? calloc(1, sizeof *j) : NULL;
+  if (j) {
+    strcpy(j->id, id); strcpy(j->tag, tag);
+    update_busy = 1;
+#ifdef _WIN32
+    HANDLE t = CreateThread(NULL, 0, update_thread, j, 0, NULL);
+    if (t) CloseHandle(t); else { update_busy = 0; free(j); j = NULL; }
+#else
+    pthread_t t;
+    if (pthread_create(&t, NULL, update_thread, j)) { update_busy = 0; free(j); j = NULL; } else pthread_detach(t);
+#endif
+  }
+  free(tag);
+  if (!j) ret(id, "{\"err\":\"Couldn't start the update.\"}");
+}
+// pwc_update_install(): "quit" (privatewebchat quits and the new version opens), or "manual" (the
+// download is shown, to install by hand)
+static void b_update_install(const char *id, const char *req, void *arg) {
+  (void)req; (void)arg;
+  if (!update_ready) { ret(id, "\"none\""); return; }
+  if (plat_update_install(ASSET)) { ret(id, "\"manual\""); return; }
+  ret(id, "\"quit\"");
+  webview_terminate(w);
+}
+
 static void on_hide(void) { webview_eval(w, "window.PwcAway && window.PwcAway()"); }
 static void after_start(webview_t wv, void *arg) {
   (void)arg;
@@ -429,6 +530,7 @@ int main(void) {
   signal(SIGPIPE, SIG_IGN);
 #endif
   if (serve_start()) { plat_fatal("privatewebchat couldn't start."); return 1; }
+  plat_update_cleanup();
   w = webview_create(PWC_DEBUG, NULL);
   if (!w) {
 #ifdef _WIN32
@@ -455,6 +557,8 @@ int main(void) {
   webview_bind(w, "pwc_owner_key", b_owner_key, NULL);
   webview_bind(w, "pwc_notify_setup", b_notify_setup, NULL);
   webview_bind(w, "pwc_notify", b_notify, NULL);
+  webview_bind(w, "pwc_update", b_update, NULL);
+  webview_bind(w, "pwc_update_install", b_update_install, NULL);
   webview_dispatch(w, after_start, NULL);
   char url[512];
   snprintf(url, sizeof url, "http://127.0.0.1:%d/%s/index.html", port, token);

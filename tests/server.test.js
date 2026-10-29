@@ -28,7 +28,7 @@ function client(keys, cert, opts = {}) {
       const m = JSON.parse(e.data);
       if (m.t === 'hello') {
         if (opts.owner) c.send({ t: 'owner', sig: await P.sign(keys.sigPriv, ['pwc-owner', m.nonce]) });
-        else c.send({ t: 'auth', cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null });
+        else c.send({ t: 'auth', v: opts.v === undefined ? '1.1.5' : opts.v, cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null });
         return;
       }
       const w = c.waiters.findIndex(x => x.t === m.t);
@@ -125,6 +125,16 @@ const last = c => c.got.pop();
   const cc = await P.acceptInvite(await P.makeInvite(oc, ok, 24), carol, 'carol');
   assert.strictEqual(last(await client(carol, cc)).t, 'welcome');
   assert.strictEqual(last(await client(mal, await certAt(mal, 'Carol', 1))).why, 'name', 'backdated cert cannot take a name');
+
+  // Apps too old to update themselves (they don't send a version) are told to download the new one
+  const old = await client(carol, cc, { v: null });
+  assert((await old.next('error')).msg.includes('releases/latest'), 'an old app is told to update');
+  old.send({ t: 'send', ref: 'r1', iv: 'A'.repeat(16), ct: 'A'.repeat(24), keys: {} });
+  await old.next('sent'); await sleep(200);
+  assert(!old.got.some(m => m.t === 'error'), 'not again straight away');
+  const fresh = await client(carol, cc);
+  await sleep(300);
+  assert(!fresh.got.some(m => m.t === 'error'), 'an up-to-date app is not told');
 
   // After a restart, whoever grabs a name first gives way once another member's app vouches for the real holder
   srv.kill(); await sleep(300);

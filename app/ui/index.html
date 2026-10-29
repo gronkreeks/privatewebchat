@@ -2,7 +2,7 @@
 <html lang="en" data-theme="kali">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src wss: ws://localhost:* ws://127.0.0.1:* https://privatewebchat.onrender.com http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src wss: ws://localhost:* ws://127.0.0.1:* https://privatewebchat.onrender.com https://api.github.com http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
   <title>privatewebchat</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -45,6 +45,17 @@
         <input id="unlockPin" class="in pin big" type="password" inputmode="numeric" maxlength="12" autocomplete="off">
         <div class="err" id="unlockErr"></div>
         <button class="btn wide" id="unlockGo">Unlock</button>
+      </div>
+    </section>
+
+    <!-- Opening privatewebchat when there's a newer version: it updates itself, then opens again -->
+    <section id="sUpdate" class="screen hidden">
+      <div class="card narrow">
+        <div class="brand small"><span class="logo"></span>privatewebchat</div>
+        <h1 id="updTitle"></h1>
+        <p class="hint" id="updStatus"></p>
+        <div class="notes" id="updNotes"></div>
+        <div class="row end hidden" id="updRow"><button class="btn" id="updSkip">Continue without updating</button></div>
       </div>
     </section>
 

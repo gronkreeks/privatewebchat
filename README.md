@@ -27,6 +27,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 - **Group chats** with any of your friends
 - **Replies**: hover over a message and click **Reply** to quote it
 - **ASCII GIFs**: animated ASCII art from the **GIF** button, like a cat, a rocket or a dancing stick figure
+- **Automatic updates**: when privatewebchat opens and there's a new version, it installs it and shows what's new
 - **Desktop notifications** for DMs, groups and friend requests, even with the window closed: privatewebchat keeps running in the system tray (Windows) or the menu bar and Dock (Mac) until you choose Quit
 - **A PIN lock** every time you open the app
 - **A black-out key** that instantly turns the window black, until you type your PIN
@@ -56,6 +57,14 @@ Every release lists a `SHA256SUMS.txt` with a checksum for each file. If your fi
 - **Mac** (Terminal): `shasum -a 256 privatewebchat.dmg`
 
 The app is built from the code in this repository: `app/build-windows.sh` and `app/build-mac.sh`.
+
+## Updates
+
+Every time privatewebchat opens, it checks this repository's [Releases](../../releases/latest) for a newer version. If there is one, it shows the patch notes, downloads the file for your computer, checks it against the release's `SHA256SUMS.txt`, installs it and opens again. If you're offline or anything goes wrong, it just opens as usual and tries again next time.
+
+Versions 1.1.4 and older can't update themselves: download the new version once by hand, and it takes care of itself after that.
+
+**Publishing an update** (developer): bump the version in `app/ui/config.js`, `app/mac/Info.plist`, `app/win/app.rc` and `app/build-mac.sh` (`node tests/version.test.js` checks they match), write the patch notes in `docs/releases/vX.Y.Z.md`, then push a tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 
 ## End-to-end encryption
 

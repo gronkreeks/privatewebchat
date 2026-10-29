@@ -24,3 +24,6 @@
 window.__notes = [];
 window.pwc_notify_setup = async () => null;
 window.pwc_notify = async (title, body) => { window.__notes.push({ title, body }); };
+// Updates: what the app asked for is recorded; a test can make the download fail
+window.pwc_update = async tag => { window.__update = tag; return sessionStorage.getItem('mock-updfail') ? { err: 'The download failed.' } : { ok: true }; };
+window.pwc_update_install = async () => { window.__installed = true; return 'quit'; };

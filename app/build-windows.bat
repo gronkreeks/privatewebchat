@@ -18,7 +18,7 @@ cl %CFLAGS% /c src\main.c /Fo:build\main.obj || goto :fail
 cl %CFLAGS% /c src\platform_win.c /Fo:build\platform_win.obj || goto :fail
 rc /nologo /fo build\app.res win\app.rc || goto :fail
 link /nologo /OUT:dist\privatewebchat.exe /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup build\webview.obj build\main.obj build\platform_win.obj build\app.res ^
-  ws2_32.lib bcrypt.lib crypt32.lib advapi32.lib ole32.lib shell32.lib shlwapi.lib user32.lib version.lib || goto :fail
+  ws2_32.lib bcrypt.lib crypt32.lib advapi32.lib ole32.lib shell32.lib shlwapi.lib user32.lib version.lib urlmon.lib || goto :fail
 echo Built dist\privatewebchat.exe
 exit /b 0
 :fail
