@@ -248,7 +248,11 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.until(`document.querySelector('#log pre.gif[data-gif="cat"]')`, 'maya gets the GIF');
   const frame = await maya.js(`return document.querySelector('#log pre.gif').textContent`);
   assert(frame.includes(String.raw` /\_/\ `), 'GIF drawn');
+  // GIFs pause in hidden windows and with reduced motion, which a headless background tab can report
+  await maya.send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
+  await maya.js(`Object.defineProperty(document, 'hidden', { get: () => false, configurable: true })`);
   await maya.until(`document.querySelector('#log pre.gif').textContent !== ${JSON.stringify(frame)}`, 'GIF plays');
+  await maya.js(`delete document.hidden`);
   console.log('✓ ASCII GIFs are picked from the GIF button and play for everyone');
 
   // ── Friends ──
