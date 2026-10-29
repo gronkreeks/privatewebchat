@@ -25,7 +25,7 @@ helper_plist() {
   <key>CFBundleExecutable</key><string>$1</string>
   <key>CFBundleIdentifier</key><string>app.privatewebchat.desktop.helper$2</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.2</string>
+  <key>CFBundleShortVersionString</key><string>1.1.3</string>
   <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>

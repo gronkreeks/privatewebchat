@@ -200,7 +200,7 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await nav(sam, 'Friends'); await tab(sam, 'add');
   await sam.fill('#friendsBody .addbox input', 'leo');
   await sam.clickText('Send friend request');
-  await sam.until(`$('friendsBody').textContent.includes('as soon as they come online')`, 'request waits');
+  await sam.until(`$('friendsBody').textContent.includes('will be sent when they come online')`, 'request waits');
   await join(leo, await inviteCode(), 'leo', '2468');
   console.log('✓ leo joined');
   await nav(leo, 'Friends'); await tab(leo, 'pending');

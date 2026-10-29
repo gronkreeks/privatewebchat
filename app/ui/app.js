@@ -771,7 +771,7 @@
           if (bad) return friendsNote(bad);
           D.wanted[name] = input.value.trim(); Vault.save();
           input.value = '';
-          return friendsNote(`${D.wanted[name]} hasn't been online since the server last restarted. Your request will be sent as soon as they come online (see Pending).`, true);
+          return friendsNote(`${D.wanted[name]} isn't online right now. Your friend request will be sent when they come online (see Pending).`, true);
         }
         const m = await friendAction('request', target.id);
         if (m) return friendsNote(m);
