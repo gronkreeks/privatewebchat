@@ -249,7 +249,7 @@
   // ──────────── Unlocked ────────────
   async function start() {
     D = Vault.data;
-    D.friends = D.friends || {}; D.blocked = D.blocked || {}; D.outbox = D.outbox || {};
+    D.friends = D.friends || {}; D.blocked = D.blocked || {}; D.outbox = D.outbox || {}; D.wanted = D.wanted || {};
     if (D.settings.notify === undefined) { D.settings.notify = true; D.settings.previews = true; }
     if (D.settings.panicCode === 'Tab') { D.settings.panicCode = 'Escape'; Vault.save(); }   // Tab moves between buttons, so it can't be the black-out key
     S.unlocked = true;
@@ -356,8 +356,9 @@
         setStatus('online');
         render();
         resendOutbox();
+        await sendWanted();
         break;
-      case 'member': await learn(m.cert); renderSidebar(); if (S.view === 'friends') renderFriends(); break;
+      case 'member': await learn(m.cert); await sendWanted(); renderSidebar(); if (S.view === 'friends') renderFriends(); break;
       case 'presence':
         if (m.on) S.online.add(m.id); else S.online.delete(m.id);
         renderSidebar(); if (S.view === 'friends') renderFriends(); else renderHeader();
@@ -576,6 +577,17 @@
     Vault.save(); render();
   }
   function unblock(id) { delete D.blocked[id]; Vault.save(); render(); }
+  // Requests to usernames this app hadn't seen yet (the server forgets members when it restarts, so
+  // someone who hasn't connected since can't be found). They go out once that person shows up.
+  async function sendWanted() {
+    if (S.status !== 'online') return;
+    for (const lower of Object.keys(D.wanted)) {
+      const target = Object.values(S.info).find(i => i.name.toLowerCase() === lower);
+      if (!target) continue;
+      delete D.wanted[lower]; Vault.save();
+      await friendAction('request', target.id);
+    }
+  }
 
   // ──────────── Sending ────────────
   const roomMeta = r => ({ id: r.id, name: r.name, members: r.members, rv: r.rv });
@@ -726,9 +738,13 @@
     } else if (S.ftab === 'pending') {
       const inc = byName(Object.keys(D.friends).filter(id => D.friends[id] === 'incoming'));
       const out = byName(Object.keys(D.friends).filter(id => D.friends[id] === 'outgoing'));
-      head = `Pending — ${inc.length + out.length}`;
+      const waiting = Object.keys(D.wanted).sort();
+      head = `Pending — ${inc.length + out.length + waiting.length}`;
       rows = [...inc.map(id => personRow(id, 'Incoming friend request', [act('Accept', () => friendAction('accept', id)), act('Decline', () => friendAction('decline', id), 'danger')])),
-        ...out.map(id => personRow(id, 'Outgoing friend request', [act('Cancel', () => friendAction('cancel', id))]))];
+        ...out.map(id => personRow(id, 'Outgoing friend request', [act('Cancel', () => friendAction('cancel', id))])),
+        ...waiting.map(lower => h('div', { class: 'frow' }, h('span', { class: 'av', style: `--h: ${hue(D.wanted[lower])}` }, D.wanted[lower][0]),
+          h('div', { class: 'who' }, h('b', { text: D.wanted[lower] }), h('small', { text: 'Friend request, sends when they come online' })),
+          h('div', { class: 'acts' }, act('Cancel', () => { delete D.wanted[lower]; Vault.save(); renderFriends(); }))))];
       empty = 'No pending friend requests.';
     } else if (S.ftab === 'blocked') {
       const list = byName(Object.keys(D.blocked));
@@ -750,7 +766,13 @@
         const name = input.value.trim().toLowerCase();
         if (!name) return;
         const target = Object.values(S.info).find(i => i.name.toLowerCase() === name);
-        if (!target) return friendsNote(`Nobody in this network is called ${input.value.trim()}. Usernames are exact, but not case-sensitive.`);
+        if (!target) {
+          const bad = usernameProblem(input.value.trim());
+          if (bad) return friendsNote(bad);
+          D.wanted[name] = input.value.trim(); Vault.save();
+          input.value = '';
+          return friendsNote(`${D.wanted[name]} hasn't been online since the server last restarted. Your request will be sent as soon as they come online (see Pending).`, true);
+        }
         const m = await friendAction('request', target.id);
         if (m) return friendsNote(m);
         input.value = '';
@@ -845,6 +867,7 @@
     render();
     if (!$('msg').disabled) $('msg').focus();
   }
+  window.addEventListener('focus', () => { if (S.black) $('blackPin').focus(); });
   window.addEventListener('focus', () => { if (S.unlocked && !S.black && D.unread[S.view]) { delete D.unread[S.view]; Vault.save(); renderSidebar(); } });
 
   // ── Composer ──
@@ -1130,7 +1153,7 @@
   window.PwcPanic = toggleBlack;
   // Closing the window keeps privatewebchat running in the background: it comes back blacked out, so
   // it takes the PIN to see anything, but notifications keep coming meanwhile
-  window.PwcAway = () => { blackout(); if (S.black) S.away = true; };
+  window.PwcAway = () => { blackout(); if (S.black) { S.away = true; $('black').classList.add('ask'); } };
   // The black-out key is checked before anything else on the page sees it
   window.addEventListener('keydown', e => {
     if (!S.unlocked || S.capturing || !D.settings.panicCode) return;

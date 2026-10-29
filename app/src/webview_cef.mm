@@ -178,6 +178,13 @@ CefRefPtr<Client> client;
   [NSApp unhide:nil];
   [window makeKeyAndOrderFront:nil];
   [NSApp activateIgnoringOtherApps:YES];
+  // The page loses keyboard focus while the window is hidden, so the black-out screen couldn't
+  // hear Esc or the PIN until it was clicked
+  if (browser) {
+    NSView *v = (__bridge NSView *)browser->GetHost()->GetWindowHandle();
+    if (v) [window makeFirstResponder:v];
+    browser->GetHost()->SetFocus(true);
+  }
 }
 - (void)applicationDidBecomeActive:(NSNotification *)n { if (!quitting && !window.visible) [self show:nil]; }
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible {

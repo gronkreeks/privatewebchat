@@ -8,7 +8,7 @@
   <key>CFBundleExecutable</key><string>privatewebchat</string>
   <key>CFBundleIconFile</key><string>icon</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.1</string>
+  <key>CFBundleShortVersionString</key><string>1.1.2</string>
   <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>NSHighResolutionCapable</key><true/>

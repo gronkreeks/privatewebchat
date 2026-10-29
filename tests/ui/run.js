@@ -196,8 +196,18 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await reuse.fill('#newPin', '1111'); await reuse.fill('#newPin2', '1111'); await reuse.click('#setPinGo');
   await reuse.until(`!$('sGone').classList.contains('hidden')`, 'refused');
   console.log('✓ a used invite is refused');
+  // A request to someone the server hasn't seen yet waits, and goes out once they show up
+  await nav(sam, 'Friends'); await tab(sam, 'add');
+  await sam.fill('#friendsBody .addbox input', 'leo');
+  await sam.clickText('Send friend request');
+  await sam.until(`$('friendsBody').textContent.includes('as soon as they come online')`, 'request waits');
   await join(leo, await inviteCode(), 'leo', '2468');
   console.log('✓ leo joined');
+  await nav(leo, 'Friends'); await tab(leo, 'pending');
+  await leo.until(`$('friendsBody').textContent.includes('sam')`, 'waiting request arrives');
+  await rowAction(leo, 'sam', 'Decline');
+  await sam.until(`!$('friendsBody').textContent.includes('Sends when they come online')`, 'no longer waiting');
+  console.log('✓ a request to someone not seen yet is sent when they join');
 
   // ── General: everyone in the network ──
   await nav(maya, 'General');
