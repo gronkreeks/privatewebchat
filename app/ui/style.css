@@ -197,6 +197,33 @@ kbd { display: inline-block; font-family: var(--mono); font-size: 0.7rem; font-w
 [data-theme="kali"] .log .m.me b { color: var(--ok); }
 .log .m.pending { opacity: 0.5; }
 .log .fail { font-size: 0.66rem; font-weight: 800; text-transform: uppercase; color: var(--danger); margin-left: 0.4rem; background: none; border: none; cursor: pointer; font-family: inherit; }
+/* Waiting for the server: shown only while it's down, so a message on its way doesn't flicker */
+.log .conn { display: none; font-size: 0.66rem; font-weight: 800; text-transform: uppercase; color: var(--warn); margin-left: 0.4rem; }
+.log.waiting .conn { display: inline; }
+/* Replies: the quoted message sits above the reply; the Reply button shows on hover */
+.log .re { display: flex; gap: 0.4rem; align-items: baseline; min-width: 0; font-size: 0.76rem; color: var(--faint); cursor: pointer; white-space: nowrap; overflow: hidden; }
+.log .re::before { content: '╭─'; font-family: var(--mono); color: var(--accent); }
+.log .re .rn { font-weight: 800; color: var(--muted); flex: none; }
+.log .re .rt { overflow: hidden; text-overflow: ellipsis; }
+.log .re:hover .rt { color: var(--text); }
+.log .rbtn { visibility: hidden; margin-left: 0.4rem; background: none; border: none; color: var(--faint); font-family: inherit; font-size: 0.68rem; font-weight: 800; cursor: pointer; }
+.log .m:hover .rbtn, .log .rbtn:focus-visible { visibility: visible; }
+.log .rbtn:hover { color: var(--accent); }
+.log .m.flash { animation: flash 1.4s; }
+@keyframes flash { from { background: var(--accent-soft); } }
+.replying { display: flex; align-items: center; gap: 0.5rem; font-size: 0.76rem; font-weight: 600; color: var(--muted); padding: 0.3rem 0.4rem 0.3rem 0.7rem; border-left: 2px solid var(--accent); background: var(--hover); border-radius: var(--radius); }
+.replying #replyText { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.replying b { color: var(--text); margin-right: 0.5rem; }
+.replying .icon { width: 22px; height: 22px; flex: none; }
+/* ASCII GIFs */
+pre.gif { font-family: var(--mono); font-size: 0.78rem; line-height: 1.2; color: var(--text); text-shadow: var(--glow); white-space: pre; overflow-x: auto; max-width: 100%; }
+.log pre.gif { width: max-content; margin: 0.3rem 0 0.2rem; padding: 0.55rem 0.8rem; background: var(--input); border: 1px solid var(--line); border-radius: var(--radius); }
+.gif-btn { align-self: center; font-family: var(--mono); padding: 0.35rem 0.6rem; }
+.gif-btn:disabled { opacity: 0.4; cursor: default; }
+.gifs { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 0.6rem; }
+.gif-card { display: flex; flex-direction: column; align-items: center; justify-content: space-between; gap: 0.45rem; background: var(--input); border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 0.7rem 0.5rem 0.55rem; color: var(--text); font-family: inherit; font-size: 0.78rem; font-weight: 800; cursor: pointer; min-height: 9.5rem; }
+.gif-card:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.gif-card pre.gif { font-size: 0.66rem; margin: auto 0; }
 .log .sys { color: var(--faint); font-style: italic; font-size: 0.78rem; padding: 0.12rem 0; }
 .log .sys::before { content: var(--sec); color: var(--accent); font-style: normal; }
 .log .older { display: block; margin: 0 auto 0.6rem; }
@@ -292,7 +319,7 @@ kbd { display: inline-block; font-family: var(--mono); font-size: 0.7rem; font-w
 .theme-card .tn { display: flex; flex-wrap: wrap; gap: 0.1rem 0.6rem; justify-content: space-between; align-items: baseline; margin-top: 0.45rem; font-weight: 800; font-size: 0.82rem; }
 .theme-card .tn small { color: var(--faint); font-weight: 600; font-size: 0.68rem; }
 
-@media (prefers-reduced-motion: reduce) { .brand::after { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .brand::after, .log .m.flash { animation: none; } }
 /* Single-colour terminals: names follow the screen colour */
 [data-theme="matrix"] .log .m b { color: #7dffa0; }
 [data-theme="amber"] .log .m b { color: #ffd166; }

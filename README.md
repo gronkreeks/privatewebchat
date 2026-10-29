@@ -25,6 +25,8 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 - **Friends**, added by username
 - **Direct messages** with friends, deleted automatically after 24 hours
 - **Group chats** with any of your friends
+- **Replies**: hover over a message and click **Reply** to quote it
+- **ASCII GIFs**: animated ASCII art from the **GIF** button, like a cat, a rocket or a dancing stick figure
 - **Desktop notifications** for DMs, groups and friend requests, even with the window closed: privatewebchat keeps running in the system tray (Windows) or the menu bar and Dock (Mac) until you choose Quit
 - **A PIN lock** every time you open the app
 - **A black-out key** that instantly turns the window black, until you type your PIN
@@ -64,6 +66,8 @@ Each message gets its own key, so no single message key unlocks a whole conversa
 ## Messages disappear when the server goes offline
 
 Messages only last as long as the server keeps running. The server never stores them to begin with, and if it goes offline (a restart, an update, or the free hosting going to sleep after a quiet spell), every app deletes all its messages the next time it connects. That includes messages that hadn't been delivered yet. Your friends, groups and username are kept. A chat that never outlives the server can't be dug up later.
+
+If you send a message while the server is asleep, it shows **Connecting…**, the app wakes the server up (that can take up to a minute), and your message goes out as soon as it's back.
 
 ## Themes
 

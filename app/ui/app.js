@@ -6,7 +6,7 @@
   'use strict';
   const P = PwcProto;
   const $ = id => document.getElementById(id);
-  const MAX_HISTORY = 3000, SHOWN = 400;
+  const MAX_HISTORY = 3000, SHOWN = 400, REPLY_TEXT = 140;
   const DM_TTL = 24 * 3600000;   // direct messages are deleted after 24 hours, for privacy and to save space
   const OUTBOX_TTL = 14 * 24 * 3600000, RESEND_AFTER = 6 * 3600000;   // how long, and how often, unconfirmed messages are resent
 
@@ -18,6 +18,7 @@
     box: null, unlocked: false, black: false, capturing: false,
     view: 'friends',    // 'friends' or a chat id
     ftab: 'online', status: 'offline', live: false,
+    reply: null,        // { rid, mid, from, text } of the message being replied to
   };
 
   // ──────────── Little helpers ────────────
@@ -257,6 +258,8 @@
     S.box = P.createBox(D.me, D.keys.ecdhPriv);
     S.removed = new Set(D.removals ? D.removals.ids : []);
     for (const c of Object.values(D.dir)) await learn(c, true);
+    // Messages written while the server was down (or still unconfirmed when privatewebchat quit) go out once it's back
+    for (const [rid, list] of Object.entries(D.msgs)) for (const m of list) if (m.st === 'pending' && m.from === D.me && m.mid) waiting.set(m.mid, rid);
     S.view = Object.values(D.friends).includes('friend') || Object.keys(S.info).length > 1 ? 'friends' : 'general';
     pruneDms();
     await applyPanicKey();
@@ -293,9 +296,11 @@
 
   // ──────────── Connection ────────────
   let ws = null, retry = 1500, retryT = null, stopped = false, queue = Promise.resolve();
+  const WAKING = 'Connecting… the server can take up to a minute to wake up.';
   const wsSend = m => { if (ws && ws.readyState === 1) { ws.send(JSON.stringify(m)); return true; } return false; };
   function setStatus(st, text, bad, action) {
     S.status = st;
+    $('log').classList.toggle('waiting', st !== 'online');
     const dot = $('netDot');
     dot.className = 'dot' + (st === 'online' ? ' on' : st === 'connecting' ? ' wait' : '');
     dot.title = st === 'online' ? 'Connected' : text || 'Offline';
@@ -309,29 +314,58 @@
   function connect() {
     if (ws || stopped) return;
     clearTimeout(retryT);
-    setStatus('connecting', 'Connecting… the server can take up to a minute to wake up.');
+    setStatus('connecting', WAKING);
     try { ws = new WebSocket(D.server); } catch (e) { setStatus('offline', "Couldn't reach the server.", true); return; }
     ws.onmessage = e => {
+      clearTimeout(deadT); deadT = null;
       let m; try { m = JSON.parse(e.data); } catch (x) { return; }
       queue = queue.then(() => onMsg(m)).catch(x => console.error(x));
     };
-    ws.onclose = e => {
-      ws = null; S.live = false; S.online.clear();
-      failPending();
-      if (stopped) return;
-      // The close code says why: 1006 is a dropped connection (network change, sleep, or the server restarting)
-      const now = h('button', { class: 'link', onclick: reconnectNow }, 'Reconnect now');
-      if (S.status === 'online' || S.status === 'connecting' || S.status === 'offline') setStatus('offline', `Disconnected (${e.code}${e.reason ? ' ' + e.reason : ''}). Reconnecting…`, true, now);
-      retryT = setTimeout(connect, retry);
-      retry = Math.min(10000, retry * 1.6);
-      renderSidebar(); if (S.view === 'friends') renderFriends();
-    };
+    ws.onclose = lost;
+  }
+  function lost(e) {
+    ws = null; S.live = false; S.online.clear();
+    clearTimeout(deadT); deadT = null;
+    holdPending();
+    if (stopped) return;
+    // The close code says why: 1006 is a dropped connection (network change, sleep, or the server restarting)
+    const now = h('button', { class: 'link', onclick: reconnectNow }, 'Reconnect now');
+    // With messages waiting to go out, it's still "Connecting…" between tries
+    if (S.status === 'online' || S.status === 'connecting' || S.status === 'offline') {
+      if (waiting.size) setStatus('connecting', WAKING, false, now);
+      else setStatus('offline', `Disconnected (${e.code}${e.reason ? ' ' + e.reason : ''}). Reconnecting…`, true, now);
+    }
+    retryT = setTimeout(connect, retry);
+    retry = Math.min(10000, retry * 1.6);
+    renderSidebar(); if (S.view === 'friends') renderFriends();
   }
   // Waking from sleep or rejoining a network shouldn't wait out the retry timer
   function reconnectNow() { if (!S.unlocked || stopped || ws) return; retry = 1500; connect(); }
   window.addEventListener('online', reconnectNow);
   window.addEventListener('focus', reconnectNow);
   function stopNet() { stopped = true; clearTimeout(retryT); if (ws) { try { ws.close(); } catch (e) { } } ws = null; }
+  // Render's free plan puts the server to sleep after a quiet spell. Sending while it's down says
+  // "Connecting…", pings it awake (that can take up to a minute) and reconnects straight away.
+  function wake() {
+    if (stopped || S.status === 'online') return;
+    try { fetch(D.server.replace(/^ws/, 'http') + '/health', { mode: 'no-cors', cache: 'no-store' }).catch(() => { }); } catch (e) { }
+    if (ws) setStatus('connecting', WAKING); else reconnectNow();
+  }
+  // A connection can die without closing (a laptop that slept, a server that went away). If nothing
+  // comes back within 10 seconds of sending, start again on a new one.
+  let deadT = null;
+  function watch() {
+    if (deadT) return;
+    deadT = setTimeout(() => {
+      deadT = null;
+      if (!ws || !sentRefs.size) return;
+      const old = ws;
+      old.onmessage = old.onclose = null;
+      try { old.close(); } catch (e) { }
+      lost({ code: 1006, reason: 'no reply' });
+      wake();
+    }, 10000);
+  }
 
   async function onMsg(m) {
     switch (m.t) {
@@ -356,6 +390,7 @@
         setStatus('online');
         render();
         resendOutbox();
+        await flushWaiting();
         await sendWanted();
         break;
       case 'member': await learn(m.cert); await sendWanted(); renderSidebar(); if (S.view === 'friends') renderFriends(); break;
@@ -436,7 +471,12 @@
       if (!r || r.kind !== 'group' || !r.members.includes(env.from)) return;
       rid = r.id;
     }
-    addMsg(rid, { mid: p.mid, from: env.from, text: p.text.slice(0, P.MAX_TEXT), at });
+    const m = { mid: p.mid, from: env.from, text: p.text.slice(0, P.MAX_TEXT), at };
+    if (typeof p.gif === 'string' && PwcGifs.byId[p.gif]) m.gif = p.gif;
+    const re = p.re;
+    if (re && typeof re === 'object' && typeof re.mid === 'string' && re.mid.length <= 40 && typeof re.from === 'string' && P.ID_RE.test(re.from) && typeof re.text === 'string')
+      m.re = { mid: re.mid, from: re.from, text: re.text.slice(0, REPLY_TEXT) };
+    addMsg(rid, m);
   }
   // Receipts: each app tells the sender, end to end, what it has saved, so the sender can stop resending
   const rcpts = new Map();
@@ -491,9 +531,10 @@
     const r = D.rooms[rid];
     if (!m.sys && m.from !== D.me) {
       if (rid !== S.view || !document.hasFocus() || S.black) D.unread[rid] = (D.unread[rid] || 0) + 1;
-      if (r && r.kind !== 'general') {
+      // General is too busy to notify about, except when someone replies to you
+      if (r && (r.kind !== 'general' || (m.re && m.re.from === D.me))) {
         const who = nameOf(m.from);
-        notify(r.kind === 'dm' ? who : `${who} in ${r.name}`, D.settings.previews ? m.text.slice(0, 160) : r.kind === 'dm' ? 'Sent you a message' : 'New message');
+        notify(r.kind === 'dm' ? who : r.kind === 'general' ? `${who} replied to you in General` : `${who} in ${r.name}`, D.settings.previews ? m.text.slice(0, 160) : r.kind === 'dm' ? 'Sent you a message' : 'New message');
       }
     }
     Vault.save();
@@ -635,36 +676,61 @@
   // Messages last only as long as the server keeps running: once it has gone offline (it comes back
   // with a new boot id), every app deletes every message, including ones not yet delivered. Friends,
   // groups and keys are kept.
+  // Messages written while the server is down are kept, so they still go out after it comes back
   function clearHistory() {
     const at = Date.now(), text = 'The server went offline, so every message was deleted. Messages only last while the server is running.';
+    const old = D.msgs;
     D.msgs = {}; D.unread = {}; D.outbox = {}; sentRefs.clear();
-    for (const id of Object.keys(D.rooms)) D.msgs[id] = [{ sys: true, text, at }];
+    for (const id of Object.keys(D.rooms)) D.msgs[id] = [{ sys: true, text, at }, ...(old[id] || []).filter(m => waiting.has(m.mid))];
     render();
   }
   async function sendMsg() {
     const text = $('msg').value.replace(/\s+$/, '').replace(/^\n+/, '');
     if (!text.trim()) return;
     const r = D.rooms[S.view];
-    if (!r) return;
-    if (S.status !== 'online') return err('chatErr', 'Not connected right now');
-    if (r.kind === 'dm' && !isFriend(r.with)) return err('chatErr', `You can only message friends`);
-    err('chatErr', '');
-    const mid = P.randomHex(12);
-    const m = { mid, from: D.me, text: text.slice(0, P.MAX_TEXT), at: Date.now(), st: 'pending' };
+    if (!r || !post(r, { text: text.slice(0, P.MAX_TEXT) })) return;
     $('msg').value = ''; grow(); left();
-    if (!recipients(r).length) { delete m.st; addMsg(r.id, m); return; }
+  }
+  // Adds a message to the chat and sends it. If the server is down it waits, marked "Connecting…".
+  function post(r, body) {
+    if (stopped) { err('chatErr', 'Not connected right now'); return false; }
+    if (r.kind === 'dm' && !isFriend(r.with)) { err('chatErr', `You can only message friends`); return false; }
+    err('chatErr', '');
+    const m = { mid: P.randomHex(12), from: D.me, ...body, at: Date.now(), st: 'pending' };
+    if (S.reply && S.reply.rid === r.id) m.re = { mid: S.reply.mid, from: S.reply.from, text: S.reply.text };
+    cancelReply();
+    if (!recipients(r).length) { delete m.st; addMsg(r.id, m); return true; }
     addMsg(r.id, m);
-    await deliver(r, m);
+    deliver(r, m);
+    return true;
   }
   async function deliver(r, m) {
-    const payload = { k: 'msg', room: r.id, mid: m.mid, text: m.text, meta: r.kind === 'group' ? roomMeta(r) : undefined };
-    try { if (!(await sendPayload(r, payload, m.mid))) markFailed(m.mid); }
-    catch (e) { markFailed(m.mid); err('chatErr', "That message couldn't be encrypted"); }
+    if (S.status !== 'online') return hold(r.id, m);
+    const payload = { k: 'msg', room: r.id, mid: m.mid, text: m.text, gif: m.gif, re: m.re, meta: r.kind === 'group' ? roomMeta(r) : undefined };
+    try {
+      if (await sendPayload(r, payload, m.mid)) watch();
+      else if (recipients(r).length) { sentRefs.delete(m.mid); hold(r.id, m); }
+      else setSt(r.id, m, 'failed');
+    } catch (e) { sentRefs.delete(m.mid); setSt(r.id, m, 'failed'); err('chatErr', "That message couldn't be encrypted"); }
   }
+  const waiting = new Map();   // message id -> chat id, for messages waiting for the server to come back
+  function hold(rid, m) { waiting.set(m.mid, rid); setSt(rid, m, 'pending'); wake(); }
+  // The connection dropped before the server confirmed these, so they're sent again once it's back.
+  // Anyone who already got one ignores the repeat.
+  function holdPending() { for (const [ref, rid] of sentRefs) waiting.set(ref, rid); sentRefs.clear(); }
+  async function flushWaiting() {
+    const list = [...waiting];
+    waiting.clear();
+    for (const [mid, rid] of list) {
+      const r = D.rooms[rid], m = r && (D.msgs[rid] || []).find(x => x.mid === mid);
+      if (m && m.st === 'pending') await deliver(r, m);
+      if (list.length > 10) await new Promise(res => setTimeout(res, 300));   // stays under the server's rate limit
+    }
+  }
+  function setSt(rid, m, st) { if (m.st === st) return; m.st = st; Vault.save(); if (rid === S.view) renderLog(); }
   function findMsg(ref) { const rid = sentRefs.get(ref); return rid && D.msgs[rid] ? [rid, D.msgs[rid].find(x => x.mid === ref)] : [rid, null]; }
   function markSent(ref) { const [rid, m] = findMsg(ref); sentRefs.delete(ref); if (m) { delete m.st; Vault.save(); if (rid === S.view) renderLog(); } }
   function markFailed(ref) { const [rid, m] = findMsg(ref); sentRefs.delete(ref); if (m) { m.st = 'failed'; Vault.save(); if (rid === S.view) renderLog(); } }
-  function failPending() { for (const ref of [...sentRefs.keys()]) markFailed(ref); }
 
   // ──────────── Rendering ────────────
   function render() {
@@ -836,14 +902,62 @@
     let line;
     if (m.sys) line = h('div', { class: 'sys', text: m.text });
     else {
-      const mine = m.from === D.me, nm = nameOf(m.from);
-      line = h('div', { class: 'm' + (mine ? ' me' : '') + (m.st === 'pending' ? ' pending' : '') },
-        h('time', { text: fmtTime(m.at) }), h('b', { text: nm, style: `--h: ${hue(nm)}`, onclick: () => profile(m.from) }), m.text,
-        m.st === 'failed' ? h('button', { class: 'fail', title: 'Send again', onclick: () => { m.st = 'pending'; renderLog(); deliver(D.rooms[S.view], m); } }, 'Not sent · Retry') : null);
+      const mine = m.from === D.me, nm = nameOf(m.from), gif = m.gif && PwcGifs.byId[m.gif];
+      line = h('div', { class: 'm' + (mine ? ' me' : '') + (m.st === 'pending' ? ' pending' : ''), 'data-mid': m.mid },
+        m.re ? h('div', { class: 're', title: 'Show the original message', onclick: () => jumpTo(m.re.mid) }, h('span', { class: 'rn', text: nameOf(m.re.from) }), h('span', { class: 'rt', text: m.re.text })) : null,
+        h('time', { text: fmtTime(m.at) }), h('b', { text: nm, style: `--h: ${hue(nm)}`, onclick: () => profile(m.from) }),
+        gif ? null : m.text,
+        m.st === 'pending' ? h('span', { class: 'conn', text: 'Connecting…' }) : null,
+        m.st === 'failed' ? h('button', { class: 'fail', title: 'Send again', onclick: () => { m.st = 'pending'; renderLog(); deliver(D.rooms[S.view], m); } }, 'Not sent · Retry') : null,
+        m.mid ? h('button', { class: 'rbtn', title: 'Reply', onclick: () => startReply(m) }, 'Reply') : null,
+        gif ? h('pre', { class: 'gif', 'data-gif': gif.id, 'aria-label': `ASCII GIF: ${gif.name}`, text: gif.frames[0] }) : null);
     }
     log.append(line);
     if (!bulk && (atBottom || m.from === D.me)) log.scrollTop = log.scrollHeight;
   }
+  // Scrolls to the message a reply quotes and flashes it, if it's still here
+  function jumpTo(mid) {
+    const find = () => [...$('log').querySelectorAll('.m')].find(x => x.dataset.mid === mid);
+    if (!find() && !shownAll && (D.msgs[S.view] || []).some(x => x.mid === mid)) { shownAll = true; renderLog(); }
+    const el = find();
+    if (!el) return;
+    el.scrollIntoView({ block: 'center' });
+    el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash');
+  }
+
+  // ── Replies ──
+  function startReply(m) {
+    S.reply = { rid: S.view, mid: m.mid, from: m.from, text: m.text.replace(/\s+/g, ' ').trim().slice(0, REPLY_TEXT) };
+    renderReply();
+    if (!$('msg').disabled) $('msg').focus();
+  }
+  function cancelReply() { S.reply = null; renderReply(); }
+  function renderReply() {
+    const r = S.reply && S.reply.rid === S.view ? S.reply : null;
+    $('replyBar').classList.toggle('hidden', !r);
+    if (r) $('replyText').replaceChildren('Replying to ', h('b', { text: nameOf(r.from) }), h('span', { class: 'rt', text: r.text }));
+  }
+  $('replyX').onclick = () => { cancelReply(); $('msg').focus(); };
+
+  // ── ASCII GIFs ──
+  // One timer plays every GIF on screen (in the chat and the picker), each at its own speed
+  const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+  setInterval(() => {
+    if (S.black || document.hidden || still.matches) return;
+    const t = Date.now();
+    for (const el of document.querySelectorAll('pre.gif')) {
+      const g = PwcGifs.byId[el.dataset.gif], f = g.frames[Math.floor(t / g.ms) % g.frames.length];
+      if (el.textContent !== f) el.textContent = f;
+    }
+  }, 50);
+  $('gifBtn').onclick = () => {
+    const r = D.rooms[S.view];
+    if (!r) return;
+    modal('ASCII GIFs', h('p', { class: 'hint', text: S.reply && S.reply.rid === r.id ? `Pick one to reply to ${nameOf(S.reply.from)} with.` : `Pick one to send to ${chatName(r)}.` }),
+      h('div', { class: 'gifs' }, PwcGifs.list.map(g => h('button', { class: 'gif-card', title: `Send ${g.name}`, onclick: () => { closeModal(); post(r, { text: `[ASCII GIF: ${g.name}]`, gif: g.id }); $('msg').focus(); } },
+        h('pre', { class: 'gif', 'data-gif': g.id, text: g.frames[0] }), h('span', { text: g.name })))),
+      closeBtn());
+  };
   function renderComposer() {
     if (!S.unlocked) return;
     const r = D.rooms[S.view];
@@ -852,13 +966,15 @@
     $('msg').disabled = locked;
     $('msg').placeholder = locked ? `You can only message friends. Add ${nameOf(r.with)} as a friend to keep chatting.`
       : r.kind === 'dm' ? `Message @${nameOf(r.with)}` : r.kind === 'general' ? 'Message #General' : `Message ${r.name}`;
-    $('sendBtn').disabled = S.status !== 'online' || locked;
+    $('sendBtn').disabled = $('gifBtn').disabled = locked || stopped;
+    renderReply();
     const path = r.kind === 'general' ? 'general' : r.kind === 'dm' ? 'dm/' + nameOf(r.with) : r.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     $('promptTop').replaceChildren('┌──(', h('b', { class: 'pu', text: `${nameOf(D.me)}㉿privatewebchat` }), ')-[', h('b', { class: 'pp', text: '~/' + path }), ']');
   }
   function openRoom(id) {
     if (!D.rooms[id]) return;
     pruneDms();
+    if (id !== S.view) S.reply = null;
     S.view = id; shownAll = false;
     delete D.unread[id];
     Vault.save();
@@ -874,7 +990,10 @@
   const grow = () => { const t = $('msg'); t.style.height = 'auto'; t.style.height = Math.min(140, t.scrollHeight) + 'px'; };
   const left = () => { const n = P.MAX_TEXT - $('msg').value.length; $('msgLeft').textContent = n <= 200 ? n : ''; $('msgLeft').classList.toggle('low', n <= 30); };
   $('msg').addEventListener('input', () => { grow(); left(); });
-  $('msg').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMsg(); } });
+  $('msg').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMsg(); }
+    else if (e.key === 'Escape' && S.reply) cancelReply();   // unless Esc is the black-out key, which comes first
+  });
   $('sendBtn').onclick = sendMsg;
 
   // ──────────── Group chats ────────────

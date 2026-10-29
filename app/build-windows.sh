@@ -9,7 +9,7 @@ if [ ! -f "$WV2/WebView2.h" ]; then
   mkdir -p build/webview2 && (cd build/webview2 && unzip -oq ../webview2.zip)
 fi
 cc -O2 -o build/embed src/embed.c
-build/embed build/ui.h ui index.html style.css config.js protocol.js vault.js app.js
+build/embed build/ui.h ui index.html style.css config.js protocol.js vault.js gifs.js app.js
 CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++
 FLAGS="-O2 -DWEBVIEW_STATIC -Ivendor/webview -Ibuild -Isrc"
 $CXX $FLAGS -std=c++17 -w -I$WV2 -c src/webview.cc -o build/webview-win.o

@@ -221,6 +221,36 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await sam.until(`$('log').textContent.includes('passes along')`, 'sam receives');
   console.log('✓ General works for everyone');
 
+  // ── Replies ──
+  await sam.js(`[...document.querySelectorAll('#log .m')].find(m => m.textContent.includes('passes along')).querySelector('.rbtn').click()`);
+  await sam.until(`!$('replyBar').classList.contains('hidden') && $('replyText').textContent.includes('maya')`, 'reply bar');
+  await background(maya, true);
+  await sam.say('Good to know');
+  assert(await sam.js(`return $('replyBar').classList.contains('hidden')`), 'reply bar closes after sending');
+  const quoted = `[...document.querySelectorAll('#log .m')].find(m => m.textContent.includes('Good to know') && m.querySelector('.re') && m.querySelector('.re').textContent.includes('passes along'))`;
+  await maya.until(quoted, 'maya sees the reply under its quote');
+  await leo.until(quoted, 'leo sees the reply under its quote');
+  await maya.until(`window.__notes.some(n => n.title === 'sam replied to you in General' && n.body === 'Good to know')`, 'reply notification');
+  assert(!(await leo.js(`return window.__notes.some(n => n.title.includes('replied'))`)), 'only the person replied to is notified');
+  await background(maya, false);
+  await maya.js(`(${quoted}).querySelector('.re').click()`);
+  await maya.until(`[...document.querySelectorAll('#log .m.flash')].some(m => m.textContent.includes('passes along'))`, 'clicking the quote shows the original');
+  await leo.js(`[...document.querySelectorAll('#log .m')].pop().querySelector('.rbtn').click()`);
+  await nav(leo, 'Friends'); await nav(leo, 'General');
+  assert(await leo.js(`return $('replyBar').classList.contains('hidden')`), 'changing chats cancels a reply');
+  console.log('✓ replies quote the original, notify the person replied to, and jump back to it');
+
+  // ── ASCII GIFs ──
+  await leo.click('#gifBtn');
+  await leo.until(`document.querySelectorAll('#modalCard .gif-card').length === 10`, 'GIF picker');
+  await leo.js(`[...document.querySelectorAll('#modalCard .gif-card')].find(c => c.textContent.trim().endsWith('Cat')).click()`);
+  await leo.until(`document.querySelector('#log pre.gif[data-gif="cat"]') && !document.querySelector('#log .m.pending')`, 'GIF sent');
+  await maya.until(`document.querySelector('#log pre.gif[data-gif="cat"]')`, 'maya gets the GIF');
+  const frame = await maya.js(`return document.querySelector('#log pre.gif').textContent`);
+  assert(frame.includes(String.raw` /\_/\ `), 'GIF drawn');
+  await maya.until(`document.querySelector('#log pre.gif').textContent !== ${JSON.stringify(frame)}`, 'GIF plays');
+  console.log('✓ ASCII GIFs are picked from the GIF button and play for everyone');
+
   // ── Friends ──
   await nav(sam, 'Friends'); await tab(sam, 'add');
   await background(maya, true);
@@ -408,6 +438,22 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await tab(maya, 'all'); await nav(maya, 'Friends');
   assert(await maya.js(`return $('friendsBody').textContent.includes('leo')`), 'friends survive');
   console.log('✓ a server restart deletes every message for everyone; friends are kept');
+
+  // ── Sending while the server is down says "Connecting…", wakes it, and sends once it's back ──
+  await nav(sam, 'General'); await nav(maya, 'General');
+  await stopRelay();
+  await maya.until(`!$('netDot').classList.contains('on')`, 'maya sees the server go');
+  await maya.fill('#msg', 'Typed while the server was asleep');
+  await maya.js(`$('msg').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+  await maya.until(`[...document.querySelectorAll('#log .m.pending .conn')].some(c => getComputedStyle(c).display !== 'none')`, 'message says Connecting…');
+  await sleep(2500);
+  assert(await maya.js(`return $('banner').textContent.includes('Connecting') && $('log').textContent.includes('Typed while the server was asleep')`), 'still connecting, message kept');
+  await startRelay(owner.keys.sigPub);
+  await online(maya);
+  await maya.until(`!document.querySelector('#log .m.pending')`, 'sent once the server is back');
+  assert(await maya.js(`return $('log').textContent.includes('The server went offline') && $('log').textContent.includes('Typed while the server was asleep')`), 'kept through the restart');
+  await sam.until(`$('log').textContent.includes('Typed while the server was asleep')`, 'sam gets it', 45000);
+  console.log('✓ a message sent while the server is down waits as "Connecting…" and goes out when it is back');
 
   // ── Owner commands: only where the owner key is, and only after the PIN ──
   await sam.click('#settingsBtn');

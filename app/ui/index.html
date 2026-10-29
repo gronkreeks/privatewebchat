@@ -2,7 +2,7 @@
 <html lang="en" data-theme="kali">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src wss: ws://localhost:* ws://127.0.0.1:*; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src wss: ws://localhost:* ws://127.0.0.1:* https://privatewebchat.onrender.com http://localhost:* http://127.0.0.1:*; base-uri 'none'; form-action 'none'">
   <title>privatewebchat</title>
   <link rel="stylesheet" href="style.css">
 </head>
@@ -107,11 +107,13 @@
           </header>
           <div class="log" id="log"></div>
           <div class="composer">
+            <div class="replying hidden" id="replyBar"><span id="replyText"></span><button class="icon" id="replyX" title="Cancel reply">×</button></div>
             <div class="prompt-top" id="promptTop"></div>
             <div class="composer-row">
               <span class="prompt-dollar">└─$</span>
               <textarea id="msg" rows="1" placeholder="Message" maxlength="2000"></textarea>
               <span class="left" id="msgLeft"></span>
+              <button class="link gif-btn" id="gifBtn" title="Send an ASCII GIF">GIF</button>
               <button class="btn" id="sendBtn">Send</button>
             </div>
           </div>
@@ -133,6 +135,7 @@
   <script src="config.js"></script>
   <script src="protocol.js"></script>
   <script src="vault.js"></script>
+  <script src="gifs.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

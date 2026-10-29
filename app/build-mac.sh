@@ -12,7 +12,7 @@ DEFS=""
 [ -n "$PWC_SELFTEST" ] && DEFS="-DPWC_SELFTEST"
 mkdir -p build dist vendor/cef
 cc -O2 -o build/embed src/embed.c
-build/embed build/ui.h ui index.html style.css config.js protocol.js vault.js app.js
+build/embed build/ui.h ui index.html style.css config.js protocol.js vault.js gifs.js app.js
 
 # A helper app's Info.plist: $1 = name, $2 = bundle id suffix
 helper_plist() {
@@ -25,7 +25,7 @@ helper_plist() {
   <key>CFBundleExecutable</key><string>$1</string>
   <key>CFBundleIdentifier</key><string>app.privatewebchat.desktop.helper$2</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.4</string>
+  <key>CFBundleShortVersionString</key><string>1.1.5</string>
   <key>CFBundleVersion</key><string>2</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>

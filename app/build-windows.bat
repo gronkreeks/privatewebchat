@@ -12,7 +12,7 @@ if not exist %WV2%\WebView2.h (
 )
 set CFLAGS=/nologo /O2 /MT /utf-8 /D_CRT_SECURE_NO_WARNINGS /DWEBVIEW_STATIC /Ivendor\webview /Ibuild /Isrc
 cl /nologo /O2 /D_CRT_SECURE_NO_WARNINGS src\embed.c /Fe:build\embed.exe /Fo:build\embed.obj || goto :fail
-build\embed.exe build\ui.h ui index.html style.css config.js protocol.js vault.js app.js || goto :fail
+build\embed.exe build\ui.h ui index.html style.css config.js protocol.js vault.js gifs.js app.js || goto :fail
 cl %CFLAGS% /EHsc /std:c++17 /w /I%WV2% /c src\webview.cc /Fo:build\webview.obj || goto :fail
 cl %CFLAGS% /c src\main.c /Fo:build\main.obj || goto :fail
 cl %CFLAGS% /c src\platform_win.c /Fo:build\platform_win.obj || goto :fail
