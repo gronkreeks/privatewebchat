@@ -1,4 +1,4 @@
-// Hush relay server. Render serves it over HTTPS/WSS on port 443 (wss://<name>.onrender.com).
+// privatewebchat relay server. Render serves it over HTTPS/WSS on port 443 (wss://<name>.onrender.com).
 // It relays end-to-end encrypted envelopes between the members of one invite-only network. It never
 // sees message text, room names or who is in which room: only who an envelope is from and to.
 // Membership is proven with certificates that members' apps hold (app/ui/protocol.js), so
@@ -114,7 +114,7 @@ async function handle(ws, m) {
     const info = await admit(m.cert);
     if (info.why === 'name') return deny(ws, 'That username is already taken.', 'name');
     if (info.why) return deny(ws, "This device isn't a member of this network. It may have been removed, or its invite was already used.", 'member');
-    if (!(await P.verify(info.sig, ['hush-auth', ws.nonce], m.sig))) return deny(ws, "Couldn't confirm this device's identity.", 'auth');
+    if (!(await P.verify(info.sig, ['pwc-auth', ws.nonce], m.sig))) return deny(ws, "Couldn't confirm this device's identity.", 'auth');
     clearTimeout(ws.authT);
     if (Array.isArray(m.dir)) for (const c of m.dir.slice(0, MAX_DIR)) await admit(c);
     const old = online.get(info.id);
@@ -153,7 +153,7 @@ function save() {
   if (!DATA_DIR || saveT) return;
   saveT = setTimeout(() => {
     saveT = null;
-    const file = path.join(DATA_DIR, 'hush-state.json');
+    const file = path.join(DATA_DIR, 'pwc-state.json');
     const state = { removals, members: [...members.values()].map(x => x.cert), queues: [...queues] };
     fs.writeFile(file + '.tmp', JSON.stringify(state), e => {
       if (e) return log('save failed', e.message);
@@ -164,7 +164,7 @@ function save() {
 async function load() {
   if (!DATA_DIR || !ownerOk) return;
   try {
-    const state = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'hush-state.json'), 'utf8'));
+    const state = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'pwc-state.json'), 'utf8'));
     if (state.removals) await applyRemovals(state.removals);
     for (const c of state.members || []) await admit(c);
     const t = now();
@@ -180,7 +180,7 @@ const server = http.createServer((req, res) => {
     return res.end(JSON.stringify({ ok: true, setUp: ownerOk, online: online.size }));
   }
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('Hush relay is running.\n');
+  res.end('privatewebchat relay is running.\n');
 });
 const wss = new WebSocketServer({ server, maxPayload: 2 * 1024 * 1024 });
 wss.on('connection', ws => {
@@ -219,4 +219,4 @@ setInterval(() => {
   }
 }, 3600000).unref();
 
-load().then(() => server.listen(PORT, () => log(`Hush relay on port ${PORT}${ownerOk ? '' : ' (not set up: OWNER_KEY is missing)'}`)));
+load().then(() => server.listen(PORT, () => log(`privatewebchat relay on port ${PORT}${ownerOk ? '' : ' (not set up: OWNER_KEY is missing)'}`)));

@@ -1,4 +1,4 @@
-// Windows side of platform.h: files in %APPDATA%\Hush, the device secret protected with DPAPI
+// Windows side of platform.h: files in %APPDATA%\privatewebchat, the device secret protected with DPAPI
 // (only this Windows account can decrypt it), and the background panic key through RegisterHotKey.
 #define WIN32_LEAN_AND_MEAN
 #define _WIN32_WINNT 0x0601
@@ -21,7 +21,7 @@ static const wchar_t *data_dir(void) {
   if (!dir[0]) {
     const wchar_t *base = _wgetenv(L"APPDATA");
     wcsncpy(dir, base ? base : L".", PATH_MAX_W - 8);
-    wcscat(dir, L"\\Hush");
+    wcscat(dir, L"\\privatewebchat");
     CreateDirectoryW(dir, NULL);
   }
   return dir;
@@ -92,7 +92,7 @@ int plat_device_secret(unsigned char out[32], int *created) {
   }
   plat_random(out, 32);
   DATA_BLOB in = { 32, out }, sealed = { 0, NULL };
-  if (!CryptProtectData(&in, L"Hush", NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &sealed)) return -1;
+  if (!CryptProtectData(&in, L"privatewebchat", NULL, NULL, NULL, CRYPTPROTECT_UI_FORBIDDEN, &sealed)) return -1;
   int r = plat_write("device.key", (const char *)sealed.pbData, sealed.cbData);
   LocalFree(sealed.pbData);
   if (r) return -1;
@@ -109,7 +109,7 @@ static int hot_on;
 #define WM_TRAY (WM_APP + 1)
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
   if (m == WM_HOTKEY && wp == 1) { if (hot_fn) hot_fn(); return 0; }
-  // Clicking a notification or the tray icon brings Hush back
+  // Clicking a notification or the tray icon brings privatewebchat back
   if (m == WM_TRAY && (LOWORD(lp) == NIN_BALLOONUSERCLICK || LOWORD(lp) == WM_LBUTTONUP)) {
     if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
     SetForegroundWindow(h);
@@ -156,7 +156,7 @@ void plat_notify(const char *title, const char *body) {
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAY;
     nid.hIcon = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
-    wcscpy(nid.szTip, L"Hush");
+    wcscpy(nid.szTip, L"privatewebchat");
     tray_on = Shell_NotifyIconW(NIM_ADD, &nid) != 0;
     if (!tray_on) return;
   }
@@ -168,7 +168,7 @@ void plat_notify(const char *title, const char *body) {
 }
 void plat_shutdown(void) { if (tray_on) { nid.uFlags = 0; Shell_NotifyIconW(NIM_DELETE, &nid); tray_on = 0; } }
 
-void plat_fatal(const char *msg) { MessageBoxA(NULL, msg, "Hush", MB_OK | MB_ICONERROR); }
+void plat_fatal(const char *msg) { MessageBoxA(NULL, msg, "privatewebchat", MB_OK | MB_ICONERROR); }
 
 // ──────────── Background panic key ────────────
 static UINT vk_for(const char *c) {

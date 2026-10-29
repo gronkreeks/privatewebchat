@@ -1,7 +1,7 @@
 {
-  "name": "hush-server",
+  "name": "privatewebchat-server",
   "version": "1.0.0",
-  "description": "Relay server for Hush, an invite-only end-to-end encrypted chat app",
+  "description": "Relay server for privatewebchat, an invite-only end-to-end encrypted chat app",
   "main": "index.js",
   "private": true,
   "scripts": {

@@ -1,5 +1,5 @@
 @echo off
-rem Builds dist\Hush.exe: one file, nothing to install beside it.
+rem Builds dist\privatewebchat.exe: one file, nothing to install beside it.
 rem Run from "x64 Native Tools Command Prompt for VS" (Visual Studio or its free Build Tools).
 setlocal
 cd /d "%~dp0"
@@ -16,9 +16,9 @@ build\embed.exe build\ui.h ui index.html style.css protocol.js vault.js app.js |
 cl %CFLAGS% /EHsc /std:c++17 /w /I%WV2% /c src\webview.cc /Fo:build\webview.obj || goto :fail
 cl %CFLAGS% /c src\main.c /Fo:build\main.obj || goto :fail
 cl %CFLAGS% /c src\platform_win.c /Fo:build\platform_win.obj || goto :fail
-link /nologo /OUT:dist\Hush.exe /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup build\webview.obj build\main.obj build\platform_win.obj ^
+link /nologo /OUT:dist\privatewebchat.exe /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup build\webview.obj build\main.obj build\platform_win.obj ^
   ws2_32.lib bcrypt.lib crypt32.lib advapi32.lib ole32.lib shell32.lib shlwapi.lib user32.lib version.lib || goto :fail
-echo Built dist\Hush.exe
+echo Built dist\privatewebchat.exe
 exit /b 0
 :fail
 echo Build failed

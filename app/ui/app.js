@@ -1,10 +1,10 @@
-// Hush app. Screens, the connection to the relay, friends, chats, settings, the black-out key and
+// privatewebchat app. Screens, the connection to the relay, friends, chats, settings, the black-out key and
 // the wipe PIN. Nothing about chats is stored on the server: General is everyone, direct messages
 // are between two friends, and a group chat's name and members travel inside its encrypted messages.
 // Friend requests are encrypted messages too.
 (() => {
   'use strict';
-  const P = HushProto;
+  const P = PwcProto;
   const $ = id => document.getElementById(id);
   const MAX_HISTORY = 3000, SHOWN = 400;
 
@@ -41,12 +41,12 @@
   const nameOf = id => (S.info[id] && S.info[id].name) || (D && D.names[id]) || 'someone';
   const isFriend = id => D.friends[id] === 'friend';
   const isOnline = id => S.online.has(id) || (id === D.me && S.status === 'online');
-  const copy = t => window.hush_copy(t);
+  const copy = t => window.pwc_copy(t);
   const native = {
-    title: t => window.hush_title(t),
-    attention: () => window.hush_attention(),
-    panic: (code, on) => window.hush_set_panic(code, on),
-    notify: (title, body) => window.hush_notify(title, body),
+    title: t => window.pwc_title(t),
+    attention: () => window.pwc_attention(),
+    panic: (code, on) => window.pwc_set_panic(code, on),
+    notify: (title, body) => window.pwc_notify(title, body),
   };
   function fmtTime(at) {
     const d = new Date(at), t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -63,10 +63,35 @@
   // A coloured circle with the first letter of the name, and an online dot for people
   function avatar(id, size, dot) {
     const n = nameOf(id);
-    return h('span', { class: 'av' + (size ? ' ' + size : ''), style: `background: hsl(${hue(n)},55%,42%)` }, n[0],
+    return h('span', { class: 'av' + (size ? ' ' + size : ''), style: `--h: ${hue(n)}` }, n[0],
       dot ? h('span', { class: 'st' + (isOnline(id) ? ' on' : '') }) : null);
   }
-  const groupAvatar = (r, size) => h('span', { class: 'av group' + (size ? ' ' + size : ''), style: `background: hsl(${hue(r.name)},45%,38%)` }, r.name[0]);
+  const groupAvatar = (r, size) => h('span', { class: 'av group' + (size ? ' ' + size : ''), style: `--h: ${hue(r.name)}` }, r.name[0]);
+
+  // ──────────── Themes ────────────
+  // Saved beside the vault (not inside it), so the lock screen already has your theme
+  const THEMES = [
+    { id: 'kali', name: 'Kali', desc: 'Dark terminal, Kali blue', bg: '#0b0d12', fg: '#d7e0ea', a: '#367bf0', b: '#3dff8f', mono: true },
+    { id: 'matrix', name: 'Matrix', desc: 'Green on black', bg: '#000000', fg: '#00ff41', a: '#00ff41', b: '#00bf31', mono: true },
+    { id: 'amber', name: 'Amber', desc: 'Retro amber screen', bg: '#0c0800', fg: '#ffb000', a: '#ffb000', b: '#ffd166', mono: true },
+    { id: 'midnight', name: 'Midnight', desc: 'The original navy and gold', bg: '#0f1e3d', fg: '#ffffff', a: '#27ae60', b: '#f5c518', mono: false },
+  ];
+  function applyTheme(id) { document.documentElement.dataset.theme = THEMES.some(t => t.id === id) ? id : 'kali'; }
+  function themePicker() {
+    const cur = document.documentElement.dataset.theme;
+    const cards = THEMES.map(t => h('button', {
+      class: 'theme-card' + (t.id === cur ? ' on' : ''), onclick: async () => {
+        applyTheme(t.id);
+        for (const c of cards) c.classList.toggle('on', c === cards[THEMES.indexOf(t)]);
+        try { await Vault.setTheme(t.id); } catch (e) { }
+      },
+    }, h('div', { class: 'sw', style: `background:${t.bg};color:${t.fg};border:1px solid ${t.a}55;font-family:${t.mono ? "ui-monospace,Menlo,Consolas,monospace" : "'Nunito','Segoe UI',system-ui,sans-serif"}` },
+      h('div', { style: `color:${t.a};font-weight:800` }, t.mono ? '┌──(you㉿pwc)-[~]' : '# General'),
+      h('div', {}, h('span', { style: `color:${t.b};font-weight:800` }, t.mono ? '<maya> ' : 'maya '), 'see you there'),
+      h('div', { style: `color:${t.a}` }, t.mono ? '└─$ _' : '')),
+    h('div', { class: 'tn' }, t.name, h('small', { text: t.desc }))));
+    return h('div', { class: 'themes' }, cards);
+  }
 
   // ──────────── Modal ────────────
   function modal(title, ...body) {
@@ -89,11 +114,12 @@
 
   // ──────────── Start-up ────────────
   async function boot() {
-    try { await Vault.load(); } catch (e) { return gone("Hush couldn't start", "It couldn't read its data folder."); }
+    try { await Vault.load(); } catch (e) { return gone("privatewebchat couldn't start", "It couldn't read its data folder."); }
+    applyTheme(Vault.theme);
     if (!Vault.exists) return show('sWelcome');
     try {
-      if (await Vault.orphaned()) return gone("This device's data can't be opened", "Hush's key for this computer is missing (for example after moving the data to another computer or Windows account), so the messages stored here can never be decrypted. Erase them to start again.");
-    } catch (e) { return gone("Hush couldn't read its key", 'The system keychain refused to hand over the key that protects your data. Open Hush again and allow access when asked.', true); }
+      if (await Vault.orphaned()) return gone("This device's data can't be opened", "privatewebchat's key for this computer is missing (for example after moving the data to another computer or Windows account), so the messages stored here can never be decrypted. Erase them to start again.");
+    } catch (e) { return gone("privatewebchat couldn't read its key", 'The system keychain refused to hand over the key that protects your data. Open privatewebchat again and allow access when asked.', true); }
     show('sUnlock');
   }
   function gone(title, msg, noErase) {
@@ -101,16 +127,16 @@
     $('goneErase').classList.toggle('hidden', !!noErase);
     show('sGone');
   }
-  $('goneErase').onclick = () => ask('Erase this device?', 'This deletes everything Hush has stored on this computer: your identity, messages and settings. It cannot be undone.', 'Erase', wipe, true);
+  $('goneErase').onclick = () => ask('Erase this device?', 'This deletes everything privatewebchat has stored on this computer: your identity, messages and settings. It cannot be undone.', 'Erase', wipe, true);
 
   // ── Unlock ──
   digitsOnly($('unlockPin'));
   async function tryPin(pin, onWrong) {
-    const wait = await window.hush_pin_start();
+    const wait = await window.pwc_pin_start();
     if (wait > 0) { onWrong(`Too many wrong PINs. Try again in ${Math.ceil(wait / 1000)} seconds.`); return null; }
     const r = S.unlocked ? await Vault.check(pin) : await Vault.unlock(pin);
     if (r === 'wipe') { await wipe(); return null; }
-    await window.hush_pin_result(r === 'ok');
+    await window.pwc_pin_result(r === 'ok');
     if (r !== 'ok') { onWrong('Wrong PIN'); return null; }
     return r;
   }
@@ -135,17 +161,18 @@
   for (const b of document.querySelectorAll('[data-back]')) b.onclick = () => show('sWelcome');
   const usernameProblem = n => n.length < 2 ? 'Usernames need at least 2 characters' : !P.USERNAME_RE.test(n) ? 'Usernames can only use letters, numbers, _ and .' : null;
 
+  const INVITE_PREFIX = 'PWC1.';
   function parseInvite(text) {
     const s = String(text || '').replace(/\s+/g, '');
-    if (!s.startsWith('HUSH1.')) return null;
+    if (!s.startsWith(INVITE_PREFIX)) return null;
     try {
-      const json = atob(s.slice(6).replace(/-/g, '+').replace(/_/g, '/'));
+      const json = atob(s.slice(INVITE_PREFIX.length).replace(/-/g, '+').replace(/_/g, '/'));
       const inv = JSON.parse(decodeURIComponent(escape(json)));
       if (!inv || typeof inv.u !== 'string' || !inv.g || typeof inv.k !== 'string') return null;
       return inv;
     } catch (e) { return null; }
   }
-  const encodeInvite = inv => 'HUSH1.' + btoa(unescape(encodeURIComponent(JSON.stringify(inv)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const encodeInvite = inv => INVITE_PREFIX + btoa(unescape(encodeURIComponent(JSON.stringify(inv)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   function inviteOwner(g) { let c = g.from; for (let i = 0; c && c.by && i < 40; i++) c = c.by.from; return c && c.m && c.m.sig; }
   // Checks the invite chain before using it
   async function checkInvite(inv) {
@@ -153,7 +180,7 @@
     const server = normServer(inv.u);
     if (!owner || !server) return null;
     const from = await P.verifyCert(inv.g.from, owner);
-    if (!from || !(await P.verify(from.sig, ['hush-invite', inv.g.ik, inv.g.exp], inv.g.s))) return null;
+    if (!from || !(await P.verify(from.sig, ['pwc-invite', inv.g.ik, inv.g.exp], inv.g.s))) return null;
     return { owner, server, from };
   }
   $('joinCode').addEventListener('input', async () => {
@@ -164,7 +191,7 @@
   $('joinNext').onclick = async () => {
     const inv = parseInvite($('joinCode').value);
     const name = $('joinName').value.trim();
-    if (!inv) return err('joinErr', "That doesn't look like a Hush invite code");
+    if (!inv) return err('joinErr', "That doesn't look like a privatewebchat invite code");
     const c = await checkInvite(inv);
     if (!c) return err('joinErr', "That invite isn't valid");
     if (inv.g.exp < Date.now()) return err('joinErr', 'That invite has expired. Ask for a new one.');
@@ -188,7 +215,7 @@
   $('createNext').onclick = () => {
     const server = normServer($('createServer').value);
     const name = $('createName').value.trim();
-    if (!server) return err('createErr', 'Enter the address of your Hush server, like your-hush.onrender.com');
+    if (!server) return err('createErr', 'Enter the address of your privatewebchat server, like your-privatewebchat.onrender.com');
     const bad = usernameProblem(name);
     if (bad) return err('createErr', bad);
     pending = { kind: 'create', server, name };
@@ -223,7 +250,7 @@
         friends: {}, blocked: {},
         settings: { panicCode: 'Escape', panicGlobal: false, notify: true, previews: true, wipeSet: false },
       });
-      await window.hush_pin_result(true);
+      await window.pwc_pin_result(true);
       pending = null;
       await start();
     } catch (e) { err('setPinErr', "Couldn't finish setting up: " + e.message); }
@@ -242,7 +269,7 @@
     for (const c of Object.values(D.dir)) await learn(c, true);
     S.view = Object.values(D.friends).includes('friend') || Object.keys(S.info).length > 1 ? 'friends' : 'general';
     await applyPanicKey();
-    try { window.hush_notify_setup(); } catch (e) { }
+    try { window.pwc_notify_setup(); } catch (e) { }
     show('sMain');
     render();
     connect();
@@ -313,11 +340,11 @@
           if (S.isOwner) {
             setStatus('setup', 'Finish setting up: the server needs your OWNER_KEY.', false, h('button', { class: 'link', onclick: ownerSetup }, 'Show me how'));
             if (!S.setupShown) { S.setupShown = true; ownerSetup(); }
-          } else setStatus('setup', m.net ? 'This server belongs to a different Hush network.' : "The server isn't set up yet. Ask the person who invited you.", true);
+          } else setStatus('setup', m.net ? 'This server belongs to a different privatewebchat network.' : "The server isn't set up yet. Ask the person who invited you.", true);
           ws.close();
           return;
         }
-        wsSend({ t: 'auth', cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['hush-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals });
+        wsSend({ t: 'auth', cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals });
         break;
       case 'welcome':
         retry = 1500;
@@ -347,7 +374,7 @@
         else setStatus('offline', m.msg, true);
         break;
       case 'removed': stopNet(); gone('You were removed from this network', 'The owner removed you, so you can no longer send or receive messages here.'); break;
-      case 'replaced': stopNet(); setStatus('offline', 'Hush connected from somewhere else with this identity, so this window stopped.', true); break;
+      case 'replaced': stopNet(); setStatus('offline', 'privatewebchat connected from somewhere else with this identity, so this window stopped.', true); break;
     }
   }
   // Someone already has the username we joined with: sign our membership again with a new one
@@ -373,7 +400,7 @@
 
   // ──────────── Receiving ────────────
   let acks = [], ackT = null;
-  // Envelopes are acknowledged once they're saved, so nothing is lost if Hush quits in between
+  // Envelopes are acknowledged once they're saved, so nothing is lost if privatewebchat quits in between
   function ackLater(eid) {
     acks.push(eid);
     clearTimeout(ackT);
@@ -444,7 +471,7 @@
     renderSidebar();
   }
   const sysMsg = (rid, text) => addMsg(rid, { sys: true, text, at: Date.now() });
-  // Desktop notifications, only while Hush is in the background and never while blacked out
+  // Desktop notifications, only while privatewebchat is in the background and never while blacked out
   function notify(title, body) {
     if (!D.settings.notify || S.black || document.hasFocus()) return;
     native.notify(title, body);
@@ -556,9 +583,9 @@
   const chatName = r => r.kind === 'general' ? 'General' : r.kind === 'dm' ? nameOf(r.with) : r.name;
   const lastAt = r => { const l = D.msgs[r.id]; return l && l.length ? l[l.length - 1].at : (r.rv || 0); };
   function updateTitle() {
-    if (S.black) return native.title('Hush');
+    if (S.black) return native.title('privatewebchat');
     const n = Object.values(D.unread).reduce((a, b) => a + b, 0) + Object.values(D.friends).filter(x => x === 'incoming').length;
-    native.title(n ? `Hush (${n})` : 'Hush');
+    native.title(n ? `privatewebchat (${n})` : 'privatewebchat');
   }
   const badge = (el, n) => { el.textContent = n > 99 ? '99+' : n; el.classList.toggle('hidden', !n); };
   function renderSidebar() {
@@ -702,7 +729,7 @@
     else {
       const mine = m.from === D.me, nm = nameOf(m.from);
       line = h('div', { class: 'm' + (mine ? ' me' : '') + (m.st === 'pending' ? ' pending' : '') },
-        h('time', { text: fmtTime(m.at) }), h('b', { text: nm, style: `color: hsl(${hue(nm)},75%,72%)`, onclick: () => profile(m.from) }), m.text,
+        h('time', { text: fmtTime(m.at) }), h('b', { text: nm, style: `--h: ${hue(nm)}`, onclick: () => profile(m.from) }), m.text,
         m.st === 'failed' ? h('button', { class: 'fail', title: 'Send again', onclick: () => { m.st = 'pending'; renderLog(); deliver(D.rooms[S.view], m); } }, 'Not sent · Retry') : null);
     }
     log.append(line);
@@ -717,6 +744,8 @@
     $('msg').placeholder = locked ? `You can only message friends. Add ${nameOf(r.with)} as a friend to keep chatting.`
       : r.kind === 'dm' ? `Message @${nameOf(r.with)}` : r.kind === 'general' ? 'Message #General' : `Message ${r.name}`;
     $('sendBtn').disabled = S.status !== 'online' || locked;
+    const path = r.kind === 'general' ? 'general' : r.kind === 'dm' ? 'dm/' + nameOf(r.with) : r.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    $('promptTop').replaceChildren('┌──(', h('b', { class: 'pu', text: `${nameOf(D.me)}㉿privatewebchat` }), ')-[', h('b', { class: 'pp', text: '~/' + path }), ']');
   }
   function openRoom(id) {
     if (!D.rooms[id]) return;
@@ -832,7 +861,7 @@
       },
     }, 'Create invite');
     modal('Invite someone',
-      h('p', { class: 'hint' }, 'An invite lets ', h('b', {}, 'one person'), ' join. Anyone who gets the code can use it, so send it to them privately. They paste it into Hush after installing it.'),
+      h('p', { class: 'hint' }, 'An invite lets ', h('b', {}, 'one person'), ' join. Anyone who gets the code can use it, so send it to them privately. They paste it into privatewebchat after installing it.'),
       h('label', { class: 'lbl', text: 'Expires after' }), exp, h('div', { class: 'row' }, make), out,
       inviteHistory(), closeBtn());
   };
@@ -849,7 +878,7 @@
     const mine = await P.safetyNumber(S.info[D.me]);
     const theirs = await P.safetyNumber(i);
     modal(`Safety number for ${i.name}`,
-      h('p', { class: 'hint', text: `Ask ${i.name} to open Settings in Hush and read you their safety number, in person or on a call. If it matches the one below, nobody (not even the server) is reading your messages to them.` }),
+      h('p', { class: 'hint', text: `Ask ${i.name} to open Settings in privatewebchat and read you their safety number, in person or on a call. If it matches the one below, nobody (not even the server) is reading your messages to them.` }),
       h('div', { class: 'box mono', text: theirs }),
       h('label', { class: 'lbl', text: 'Yours' }), h('div', { class: 'box mono', text: mine }), closeBtn());
   }
@@ -865,10 +894,10 @@
   function ownerSetup() {
     const note = h('div', { class: 'err ok' });
     modal('Finish setting up your server',
-      h('p', { class: 'hint' }, 'Your server needs to know who owns this network. In the ', h('b', {}, 'Render dashboard'), ', open your Hush service, go to ', h('b', {}, 'Environment'), ', and add a variable named ', h('b', {}, 'OWNER_KEY'), ' with this value:'),
+      h('p', { class: 'hint' }, 'Your server needs to know who owns this network. In the ', h('b', {}, 'Render dashboard'), ', open your privatewebchat service, go to ', h('b', {}, 'Environment'), ', and add a variable named ', h('b', {}, 'OWNER_KEY'), ' with this value:'),
       h('div', { class: 'box mono', text: D.owner }),
       h('div', { class: 'row' }, h('button', { class: 'btn gold', onclick: () => { copy(D.owner); note.textContent = 'Copied'; } }, 'Copy'), note),
-      h('p', { class: 'hint', style: 'margin-top:0.8rem', text: "Save it and Render restarts the server. Hush keeps trying and continues as soon as the server is ready. This key isn't secret: it only lets the server check signatures." }),
+      h('p', { class: 'hint', style: 'margin-top:0.8rem', text: "Save it and Render restarts the server. privatewebchat keeps trying and continues as soon as the server is ready. This key isn't secret: it only lets the server check signatures." }),
       closeBtn());
     $('modalCard').dataset.kind = 'setup';
   }
@@ -893,7 +922,7 @@
           $('panicKbd').textContent = keyLabel(e.code);
           const ok = await applyPanicKey();
           keyNote.className = 'err' + (ok ? ' ok' : '');
-          keyNote.textContent = st.panicGlobal && !ok ? "That key can't be used while Hush is in the background. It still works inside Hush." : 'Saved';
+          keyNote.textContent = st.panicGlobal && !ok ? "That key can't be used while privatewebchat is in the background. It still works inside privatewebchat." : 'Saved';
           if (e.key.length === 1) keyNote.textContent += ". Heads up: this key types a character, so you can't type it in messages.";
         };
         window.addEventListener('keydown', grab, true);
@@ -904,7 +933,7 @@
       st.panicGlobal = global.checked; Vault.save();
       const ok = await applyPanicKey();
       keyNote.className = 'err' + (ok || !st.panicGlobal ? ' ok' : '');
-      keyNote.textContent = st.panicGlobal && !ok ? "That key can't be used while Hush is in the background. Pick another, like F9." : 'Saved';
+      keyNote.textContent = st.panicGlobal && !ok ? "That key can't be used while privatewebchat is in the background. Pick another, like F9." : 'Saved';
     };
     const notifyBox = h('input', { type: 'checkbox', checked: st.notify });
     const previewBox = h('input', { type: 'checkbox', checked: st.previews });
@@ -943,20 +972,23 @@
 
     const mine = await P.safetyNumber(S.info[D.me] || D.cert.m);
     modal('Settings',
+      h('h3', { text: 'Appearance' }),
+      themePicker(),
+
       h('h3', { text: 'Black-out key' }),
-      h('p', { class: 'hint' }, 'Press it and Hush instantly goes completely black. To come back, type your PIN on the black screen and press Enter. Nothing shows while you type.'),
+      h('p', { class: 'hint' }, 'Press it and privatewebchat instantly goes completely black. To come back, type your PIN on the black screen and press Enter. Nothing shows while you type.'),
       h('div', { class: 'row', style: 'margin-top:0' }, h('span', {}, 'Key: '), kbd, change),
-      h('label', { class: 'check' }, global, h('span', {}, 'Also works when Hush is in the background', h('small', { class: 'hint', style: 'display:block;margin:0' }, "Hush takes the key over in every app, so pick one you don't use, like F9."))),
+      h('label', { class: 'check' }, global, h('span', {}, 'Also works when privatewebchat is in the background', h('small', { class: 'hint', style: 'display:block;margin:0' }, "privatewebchat takes the key over in every app, so pick one you don't use, like F9."))),
       keyNote,
       h('div', { class: 'row' }, h('button', { class: 'link', onclick: () => { closeModal(); blackout(); } }, 'Black out now')),
 
       h('h3', { text: 'Wipe PIN' }),
-      h('p', { class: 'hint' }, 'A second PIN that ', h('b', {}, 'erases everything'), ' Hush has stored on this computer: your identity, every message and all settings. Entering it on the lock screen or the black screen wipes Hush instantly and it opens as a fresh install. This can\'t be undone. Status: ', wipeState),
+      h('p', { class: 'hint' }, 'A second PIN that ', h('b', {}, 'erases everything'), ' privatewebchat has stored on this computer: your identity, every message and all settings. Entering it on the lock screen or the black screen wipes privatewebchat instantly and it opens as a fresh install. This can\'t be undone. Status: ', wipeState),
       cur2, h('div', { class: 'row' }, w1, w2), wipeNote,
       h('div', { class: 'row' }, h('button', { class: 'link', onclick: () => setWipe(w1.value) }, 'Set wipe PIN'), h('button', { class: 'link', onclick: () => setWipe(null) }, 'Turn off')),
 
       h('h3', { text: 'Notifications' }),
-      h('label', { class: 'check' }, notifyBox, 'Desktop notifications for direct messages, group chats and friend requests while Hush is in the background'),
+      h('label', { class: 'check' }, notifyBox, 'Desktop notifications for direct messages, group chats and friend requests while privatewebchat is in the background'),
       h('label', { class: 'check' }, previewBox, 'Show message text in notifications'),
 
       h('h3', { text: 'PIN' }),
@@ -986,7 +1018,7 @@
     $('app').classList.add('hidden');
     $('black').classList.remove('hidden');
     $('blackPin').value = ''; dots();
-    native.title('Hush');
+    native.title('privatewebchat');
     setTimeout(() => $('blackPin').focus(), 0);
   }
   function unblack() {
@@ -998,7 +1030,7 @@
     if (S.view !== 'friends') $('msg').focus();
   }
   const dots = () => { $('blackDots').textContent = '•'.repeat($('blackPin').value.length); };
-  window.HushPanic = blackout;
+  window.PwcPanic = blackout;
   // The black-out key is checked before anything else on the page sees it
   window.addEventListener('keydown', e => {
     if (!S.unlocked || S.black || S.capturing || !D.settings.panicCode) return;
@@ -1024,7 +1056,7 @@
     stopNet();
     S.unlocked = false; D = null;
     await Vault.lock();   // so a save that's already running can't write the vault back afterwards
-    try { await window.hush_wipe(); } catch (e) { }
+    try { await window.pwc_wipe(); } catch (e) { }
     location.reload();
   }
 

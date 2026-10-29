@@ -1,4 +1,4 @@
-// Hush protocol, shared by the desktop app and the relay server (server/index.js requires this file).
+// privatewebchat protocol, shared by the desktop app and the relay server (server/index.js requires this file).
 // Every member has two P-256 keys: an ECDSA key that signs and an ECDH key that encrypts.
 // Membership is a chain of signatures back to the network owner (owner → invite → member →
 // invite → member …), so the server can check that someone was invited without storing anything.
@@ -7,7 +7,7 @@
 // recipient's keys, so the server only relays ciphertext it can't read.
 (function (root, make) {
   if (typeof module === 'object' && module.exports) module.exports = make(globalThis.crypto);
-  else root.HushProto = make(root.crypto);
+  else root.PwcProto = make(root.crypto);
 })(this, function (crypto) {
   'use strict';
   const subtle = crypto.subtle;
@@ -62,7 +62,7 @@
   const idOf = async sigPub => hex(await subtle.digest('SHA-256', fromB64(sigPub))).slice(0, 32);
   // 30 digits two people can compare to make sure the server didn't swap anyone's keys
   async function safetyNumber(m) {
-    const h = new Uint8Array(await subtle.digest('SHA-256', te.encode('hush-safety|' + m.sig + '|' + m.ecdh)));
+    const h = new Uint8Array(await subtle.digest('SHA-256', te.encode('pwc-safety|' + m.sig + '|' + m.ecdh)));
     let s = '';
     for (let i = 0; i < 6; i++) s += (((h[i * 3] << 16) | (h[i * 3 + 1] << 8) | h[i * 3 + 2]) % 100000).toString().padStart(5, '0') + ' ';
     return s.trim();
@@ -74,7 +74,7 @@
   const member = (keys, name) => ({ name: String(name), sig: keys.sigPub, ecdh: keys.ecdhPub, at: Date.now() });
   async function ownerCert(keys, name) {
     const m = member(keys, name);
-    return { m, s: await sign(keys.sigPriv, ['hush-owner', m]) };
+    return { m, s: await sign(keys.sigPriv, ['pwc-owner', m]) };
   }
   // An invite is a fresh key pair whose public half the inviter signs. Whoever holds the private
   // half can sign one member into the network.
@@ -82,11 +82,11 @@
     const k = await subtle.generateKey(ECDSA, true, ['sign', 'verify']);
     const ik = toB64(await subtle.exportKey('raw', k.publicKey));
     const exp = Date.now() + Math.round(hours * 3600000);
-    return { g: { ik, exp, from: myCert, s: await sign(myKeys.sigPriv, ['hush-invite', ik, exp]) }, k: toB64(await subtle.exportKey('pkcs8', k.privateKey)) };
+    return { g: { ik, exp, from: myCert, s: await sign(myKeys.sigPriv, ['pwc-invite', ik, exp]) }, k: toB64(await subtle.exportKey('pkcs8', k.privateKey)) };
   }
   async function acceptInvite(inv, keys, name) {
     const m = member(keys, name);
-    return { m, by: inv.g, s: await sign(inv.k, ['hush-join', m]) };
+    return { m, by: inv.g, s: await sign(inv.k, ['pwc-join', m]) };
   }
   // Checks a certificate all the way back to the owner. Returns { id, name, sig, ecdh, ik, by, chain }
   // (chain = ids of everyone above this member), or null if anything is wrong.
@@ -98,14 +98,14 @@
     const mm = { name: m.name, sig: m.sig, ecdh: m.ecdh, at: m.at };
     const id = await idOf(m.sig);
     if (!cert.by) {
-      if (m.sig !== owner || !(await verify(owner, ['hush-owner', mm], cert.s))) return null;
+      if (m.sig !== owner || !(await verify(owner, ['pwc-owner', mm], cert.s))) return null;
       return { id, name: m.name, at: m.at, sig: m.sig, ecdh: m.ecdh, ik: null, by: null, chain: [] };
     }
     const g = cert.by;
     if (typeof g !== 'object' || typeof g.exp !== 'number' || m.at > g.exp) return null;
-    if (!(await verify(g.ik, ['hush-join', mm], cert.s))) return null;
+    if (!(await verify(g.ik, ['pwc-join', mm], cert.s))) return null;
     const up = await verifyCert(g.from, owner, depth + 1);
-    if (!up || !(await verify(up.sig, ['hush-invite', g.ik, g.exp], g.s))) return null;
+    if (!up || !(await verify(up.sig, ['pwc-invite', g.ik, g.exp], g.s))) return null;
     if (up.id === id || up.chain.includes(id)) return null;
     return { id, name: m.name, at: m.at, sig: m.sig, ecdh: m.ecdh, ik: g.ik, by: up.id, chain: [...up.chain, up.id] };
   }
@@ -114,11 +114,11 @@
 
   // The owner's list of removed members. Every member's app keeps the newest one and hands it to
   // the server when it connects, so removals survive server restarts.
-  async function signRemovals(keys, v, ids) { return { v, ids, s: await sign(keys.sigPriv, ['hush-removed', v, ids]) }; }
+  async function signRemovals(keys, v, ids) { return { v, ids, s: await sign(keys.sigPriv, ['pwc-removed', v, ids]) }; }
   async function checkRemovals(r, owner) {
     if (!r || typeof r !== 'object' || !Number.isInteger(r.v) || r.v < 1 || !Array.isArray(r.ids) || r.ids.length > 5000 ||
       !r.ids.every(x => typeof x === 'string' && ID_RE.test(x))) return null;
-    return (await verify(owner, ['hush-removed', r.v, r.ids], r.s)) ? { v: r.v, ids: r.ids, s: r.s } : null;
+    return (await verify(owner, ['pwc-removed', r.v, r.ids], r.s)) ? { v: r.v, ids: r.ids, s: r.s } : null;
   }
 
   // ── Messages ──
@@ -132,13 +132,13 @@
           const theirs = await subtle.importKey('raw', fromB64(pub), ECDH, false, []);
           const bits = await subtle.deriveBits({ name: 'ECDH', public: theirs }, await priv, 256);
           const hk = await subtle.importKey('raw', bits, 'HKDF', false, ['deriveKey']);
-          return subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: te.encode('hush-wrap-v1') },
+          return subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(32), info: te.encode('pwc-wrap-v1') },
             hk, { name: 'AES-KW', length: 256 }, false, ['wrapKey', 'unwrapKey']);
         })());
       }
       return wraps.get(pub);
     }
-    const aad = from => te.encode('hush-v1|' + from);
+    const aad = from => te.encode('pwc-v1|' + from);
     async function seal(payload, recipients) {
       const key = await subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt']);
       const iv = crypto.getRandomValues(new Uint8Array(12));

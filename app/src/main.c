@@ -1,5 +1,5 @@
-// Hush desktop app. A small C program that opens the system web view (WKWebView on Mac,
-// WebView2 on Windows) and shows the Hush UI, which is built into the program (ui.h, made by
+// privatewebchat desktop app. A small C program that opens the system web view (WKWebView on Mac,
+// WebView2 on Windows) and shows the privatewebchat UI, which is built into the program (ui.h, made by
 // embed.c from the files in ui/). The UI is served from 127.0.0.1 on a random port and a secret
 // path, because WebCrypto only runs on secure origins and loopback counts as one.
 // The UI encrypts everything it stores before handing it to these functions.
@@ -30,8 +30,8 @@ typedef int sock_t;
 #define close_sock close
 #endif
 
-#ifndef HUSH_DEBUG
-#define HUSH_DEBUG 0
+#ifndef PWC_DEBUG
+#define PWC_DEBUG 0
 #endif
 
 #define VAULT "vault.json"
@@ -311,7 +311,7 @@ static void b_wipe(const char *id, const char *req, void *arg) {
   plat_remove(ATTEMPTS);
   ret(id, "true");
 }
-static void on_hotkey(void) { webview_eval(w, "window.HushPanic && window.HushPanic()"); }
+static void on_hotkey(void) { webview_eval(w, "window.PwcPanic && window.PwcPanic()"); }
 static void b_set_panic(const char *id, const char *req, void *arg) {
   (void)arg;
   char *code = json_arg(req, 0);
@@ -347,7 +347,7 @@ static void b_copy(const char *id, const char *req, void *arg) {
 
 static void after_start(webview_t wv, void *arg) { (void)arg; plat_init(webview_get_window(wv)); }
 
-#ifdef HUSH_SELFTEST
+#ifdef PWC_SELFTEST
 // Test builds only (tools/selftest.sh): checks WebCrypto, the bindings and WebSocket inside the
 // real web view, prints the result and quits.
 static void b_selftest_done(const char *id, const char *req, void *arg) {
@@ -363,19 +363,19 @@ static const char *SELFTEST_JS =
   "window.addEventListener('load', async () => {"
   "  const r = { secure: isSecureContext, subtle: !!(window.crypto && crypto.subtle) };"
   "  try {"
-  "    const k = await HushProto.generateKeys(); r.keys = !!k.sigPub;"
-  "    const c = await HushProto.ownerCert(k, 'Test'); r.cert = !!(await HushProto.verifyCert(c, k.sigPub));"
+  "    const k = await PwcProto.generateKeys(); r.keys = !!k.sigPub;"
+  "    const c = await PwcProto.ownerCert(k, 'Test'); r.cert = !!(await PwcProto.verifyCert(c, k.sigPub));"
   "    const b = await crypto.subtle.importKey('raw', new TextEncoder().encode('1234'), 'PBKDF2', false, ['deriveBits']);"
   "    const t = performance.now();"
   "    await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new Uint8Array(16), iterations: 600000 }, b, 256);"
   "    r.pbkdf2ms = Math.round(performance.now() - t);"
   "  } catch (e) { r.err = String(e); }"
-  "  r.pinWait = await hush_pin_start();"
+  "  r.pinWait = await pwc_pin_start();"
   "  r.screen = [...document.querySelectorAll('section')].filter(s => !s.classList.contains('hidden')).map(s => s.id).join();"
   "  const url = new URLSearchParams(location.hash.slice(1)).get('ws');"
   "  if (url) await new Promise(res => { const ws = new WebSocket(url); ws.onmessage = e => { r.ws = JSON.parse(e.data).t; ws.close(); res(); };"
   "    ws.onerror = () => { r.ws = 'error'; res(); }; setTimeout(res, 8000); });"
-  "  hush_selftest_done(JSON.stringify(r));"
+  "  pwc_selftest_done(JSON.stringify(r));"
   "});";
 #endif
 
@@ -383,38 +383,38 @@ int main(void) {
 #ifndef _WIN32
   signal(SIGPIPE, SIG_IGN);
 #endif
-  if (serve_start()) { plat_fatal("Hush couldn't start."); return 1; }
-  w = webview_create(HUSH_DEBUG, NULL);
+  if (serve_start()) { plat_fatal("privatewebchat couldn't start."); return 1; }
+  w = webview_create(PWC_DEBUG, NULL);
   if (!w) {
 #ifdef _WIN32
-    plat_fatal("Hush needs the Microsoft Edge WebView2 Runtime. Install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 and open Hush again.");
+    plat_fatal("privatewebchat needs the Microsoft Edge WebView2 Runtime. Install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703 and open privatewebchat again.");
 #else
-    plat_fatal("Hush couldn't open its window.");
+    plat_fatal("privatewebchat couldn't open its window.");
 #endif
     return 1;
   }
-  webview_set_title(w, "Hush");
+  webview_set_title(w, "privatewebchat");
   webview_set_size(w, 760, 520, WEBVIEW_HINT_MIN);
   webview_set_size(w, 1100, 720, WEBVIEW_HINT_NONE);
-  webview_bind(w, "hush_read_vault", b_read_vault, NULL);
-  webview_bind(w, "hush_write_vault", b_write_vault, NULL);
-  webview_bind(w, "hush_device_secret", b_device_secret, NULL);
-  webview_bind(w, "hush_pin_start", b_pin_start, NULL);
-  webview_bind(w, "hush_pin_result", b_pin_result, NULL);
-  webview_bind(w, "hush_wipe", b_wipe, NULL);
-  webview_bind(w, "hush_set_panic", b_set_panic, NULL);
-  webview_bind(w, "hush_attention", b_attention, NULL);
-  webview_bind(w, "hush_title", b_title, NULL);
-  webview_bind(w, "hush_copy", b_copy, NULL);
-  webview_bind(w, "hush_notify_setup", b_notify_setup, NULL);
-  webview_bind(w, "hush_notify", b_notify, NULL);
+  webview_bind(w, "pwc_read_vault", b_read_vault, NULL);
+  webview_bind(w, "pwc_write_vault", b_write_vault, NULL);
+  webview_bind(w, "pwc_device_secret", b_device_secret, NULL);
+  webview_bind(w, "pwc_pin_start", b_pin_start, NULL);
+  webview_bind(w, "pwc_pin_result", b_pin_result, NULL);
+  webview_bind(w, "pwc_wipe", b_wipe, NULL);
+  webview_bind(w, "pwc_set_panic", b_set_panic, NULL);
+  webview_bind(w, "pwc_attention", b_attention, NULL);
+  webview_bind(w, "pwc_title", b_title, NULL);
+  webview_bind(w, "pwc_copy", b_copy, NULL);
+  webview_bind(w, "pwc_notify_setup", b_notify_setup, NULL);
+  webview_bind(w, "pwc_notify", b_notify, NULL);
   webview_dispatch(w, after_start, NULL);
   char url[512];
   snprintf(url, sizeof url, "http://127.0.0.1:%d/%s/index.html", port, token);
-#ifdef HUSH_SELFTEST
-  webview_bind(w, "hush_selftest_done", b_selftest_done, NULL);
+#ifdef PWC_SELFTEST
+  webview_bind(w, "pwc_selftest_done", b_selftest_done, NULL);
   webview_init(w, SELFTEST_JS);
-  if (getenv("HUSH_SELFTEST_WS")) { strcat(url, "#ws="); strncat(url, getenv("HUSH_SELFTEST_WS"), 200); }
+  if (getenv("PWC_SELFTEST_WS")) { strcat(url, "#ws="); strncat(url, getenv("PWC_SELFTEST_WS"), 200); }
 #endif
   webview_navigate(w, url);
   webview_run(w);

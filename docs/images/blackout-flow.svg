@@ -1,42 +1,42 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="330" viewBox="0 0 880 330" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="330" viewBox="0 0 880 330" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
   <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#f5c518"/></marker>
-    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff9a8a"/></marker>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#367bf0"/></marker>
+    <marker id="r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#ff5c57"/></marker>
     <g id="win">
-      <rect width="190" height="124" rx="10" fill="#0b1730" stroke="rgba(255,255,255,0.2)"/>
-      <rect width="190" height="18" rx="9" fill="#13264b"/>
+      <rect width="190" height="124" rx="10" fill="#07090d" stroke="#2c3647"/>
+      <rect width="190" height="18" rx="9" fill="#10141b"/>
       <circle cx="12" cy="9" r="3.5" fill="#ff5f57"/><circle cx="24" cy="9" r="3.5" fill="#febc2e"/><circle cx="36" cy="9" r="3.5" fill="#28c840"/>
-      <rect x="8" y="26" width="46" height="90" rx="5" fill="#0f1e3d"/>
-      <rect x="62" y="30" width="96" height="7" rx="3" fill="#7da7e8"/>
+      <rect x="8" y="26" width="46" height="90" rx="5" fill="#0b0d12"/>
+      <rect x="62" y="30" width="96" height="7" rx="3" fill="#367bf0"/>
       <rect x="62" y="44" width="116" height="7" rx="3" fill="rgba(255,255,255,0.45)"/>
-      <rect x="62" y="58" width="80" height="7" rx="3" fill="#c4e88b"/>
+      <rect x="62" y="58" width="80" height="7" rx="3" fill="#3dff8f"/>
       <rect x="62" y="72" width="106" height="7" rx="3" fill="rgba(255,255,255,0.45)"/>
-      <rect x="62" y="100" width="120" height="14" rx="5" fill="#13264b"/>
+      <rect x="62" y="100" width="120" height="14" rx="5" fill="#10141b"/>
     </g>
   </defs>
-  <rect width="880" height="330" rx="18" fill="#0f1e3d"/>
+  <rect width="880" height="330" rx="8" fill="#0b0d12"/>
 
   <use href="#win" x="30" y="40"/>
   <text x="125" y="190" fill="#fff" font-size="14" font-weight="800" text-anchor="middle">Chatting</text>
 
-  <line x1="230" y1="102" x2="320" y2="102" stroke="#f5c518" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="230" y1="102" x2="320" y2="102" stroke="#367bf0" stroke-width="2.5" marker-end="url(#a)"/>
   <rect x="246" y="70" width="58" height="22" rx="6" fill="rgba(255,255,255,0.12)" stroke="rgba(255,255,255,0.3)"/>
   <text x="275" y="86" fill="#fff" font-size="12" font-weight="800" text-anchor="middle">Esc</text>
-  <text x="275" y="124" fill="#f5c518" font-size="11" font-weight="700" text-anchor="middle">one key</text>
+  <text x="275" y="124" fill="#367bf0" font-size="11" font-weight="700" text-anchor="middle">one key</text>
 
-  <rect x="330" y="40" width="190" height="124" rx="10" fill="#000" stroke="rgba(255,255,255,0.2)"/>
+  <rect x="330" y="40" width="190" height="124" rx="10" fill="#000" stroke="#2c3647"/>
   <text x="425" y="140" fill="#2a2a2a" font-size="14" text-anchor="middle" letter-spacing="4">••••</text>
   <text x="425" y="190" fill="#fff" font-size="14" font-weight="800" text-anchor="middle">Completely black</text>
 
-  <line x1="530" y1="102" x2="640" y2="102" stroke="#f5c518" stroke-width="2.5" marker-end="url(#a)"/>
-  <text x="585" y="88" fill="#f5c518" font-size="11" font-weight="700" text-anchor="middle">PIN + Enter</text>
+  <line x1="530" y1="102" x2="640" y2="102" stroke="#367bf0" stroke-width="2.5" marker-end="url(#a)"/>
+  <text x="585" y="88" fill="#367bf0" font-size="11" font-weight="700" text-anchor="middle">PIN + Enter</text>
 
   <use href="#win" x="650" y="40"/>
   <text x="745" y="190" fill="#fff" font-size="14" font-weight="800" text-anchor="middle">Back where you were</text>
 
-  <path d="M425 200 L425 238" stroke="#ff9a8a" stroke-width="2.5" fill="none" marker-end="url(#r)"/>
-  <text x="435" y="224" fill="#ff9a8a" font-size="11" font-weight="700">wipe PIN + Enter</text>
-  <rect x="250" y="246" width="350" height="56" rx="12" fill="rgba(255,154,138,0.1)" stroke="rgba(255,154,138,0.45)"/>
-  <text x="425" y="270" fill="#ff9a8a" font-size="14" font-weight="800" text-anchor="middle">Everything on this computer is erased</text>
-  <text x="425" y="290" fill="#c9d3e6" font-size="12" text-anchor="middle">Hush reopens as a fresh install</text>
+  <path d="M425 200 L425 238" stroke="#ff5c57" stroke-width="2.5" fill="none" marker-end="url(#r)"/>
+  <text x="435" y="224" fill="#ff5c57" font-size="11" font-weight="700">wipe PIN + Enter</text>
+  <rect x="250" y="246" width="350" height="56" rx="6" fill="rgba(255,92,87,0.08)" stroke="rgba(255,92,87,0.45)"/>
+  <text x="425" y="270" fill="#ff5c57" font-size="14" font-weight="800" text-anchor="middle">Everything on this computer is erased</text>
+  <text x="425" y="290" fill="#8b96a5" font-size="12" text-anchor="middle">privatewebchat reopens as a fresh install</text>
 </svg>

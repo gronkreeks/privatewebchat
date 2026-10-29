@@ -1,4 +1,4 @@
-// Mac side of platform.h: files in ~/Library/Application Support/Hush, the device secret in the
+// Mac side of platform.h: files in ~/Library/Application Support/privatewebchat, the device secret in the
 // Keychain, the background panic key through Carbon hot keys, and the menu bar (without an Edit
 // menu, Cmd+C and Cmd+V don't work in the web view). Cocoa is called through the Objective-C
 // runtime so this stays plain C.
@@ -21,7 +21,7 @@ static char dir[1024];
 static const char *data_dir(void) {
   if (!dir[0]) {
     const char *home = getenv("HOME");
-    snprintf(dir, sizeof dir, "%s/Library/Application Support/Hush", home ? home : ".");
+    snprintf(dir, sizeof dir, "%s/Library/Application Support/privatewebchat", home ? home : ".");
     mkdir(dir, 0700);
   }
   return dir;
@@ -76,7 +76,7 @@ long long plat_now_ms(void) {
 static CFMutableDictionaryRef kc_query(void) {
   CFMutableDictionaryRef q = CFDictionaryCreateMutable(NULL, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
   CFDictionarySetValue(q, kSecClass, kSecClassGenericPassword);
-  CFDictionarySetValue(q, kSecAttrService, CFSTR("Hush"));
+  CFDictionarySetValue(q, kSecAttrService, CFSTR("privatewebchat"));
   CFDictionarySetValue(q, kSecAttrAccount, CFSTR("device-secret"));
   return q;
 }
@@ -138,9 +138,9 @@ static void add_submenu(id bar, id sub) {
 void plat_init(void *window) {
   (void)window;
   id bar = menu("");
-  id appm = menu("Hush");
-  add_item(appm, "Hide Hush", "hide:", "h");
-  add_item(appm, "Quit Hush", "terminate:", "q");
+  id appm = menu("privatewebchat");
+  add_item(appm, "Hide privatewebchat", "hide:", "h");
+  add_item(appm, "Quit privatewebchat", "terminate:", "q");
   id edit = menu("Edit");
   add_item(edit, "Undo", "undo:", "z");
   add_item(edit, "Redo", "redo:", "Z");
@@ -164,7 +164,7 @@ void plat_copy(const char *text) {
 void plat_fatal(const char *msg) { fprintf(stderr, "%s\n", msg); }
 
 // ──────────── Notifications (UserNotifications framework) ────────────
-// Only works when running as Hush.app: a bare binary has no bundle identifier, and the framework
+// Only works when running as privatewebchat.app: a bare binary has no bundle identifier, and the framework
 // refuses to run without one.
 static id center(void) {
   if (!msg0(msg0(C("NSBundle"), "mainBundle"), "bundleIdentifier")) return nil;
@@ -229,7 +229,7 @@ int plat_set_hotkey(const char *code, void (*fn)(void)) {
   }
   for (size_t i = 0; i < sizeof KEYS / sizeof KEYS[0]; i++) {
     if (strcmp(KEYS[i].code, code)) continue;
-    EventHotKeyID hid = { 'HUSH', 1 };
+    EventHotKeyID hid = { 'PWCH', 1 };
     return RegisterEventHotKey(KEYS[i].key, 0, hid, GetApplicationEventTarget(), 0, &hot) == noErr;
   }
   return 0;

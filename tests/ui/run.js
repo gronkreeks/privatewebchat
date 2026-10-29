@@ -35,7 +35,7 @@ function startRelay(owner) {
   return new Promise(res => {
     relay = spawn('node', [path.join(ROOT, 'server/index.js')], { env: { ...process.env, PORT: RELAY_PORT, OWNER_KEY: owner } });
     procs.push(relay);
-    relay.stdout.on('data', d => { if (String(d).includes('Hush relay on port')) res(); });
+    relay.stdout.on('data', d => { if (String(d).includes('privatewebchat relay on port')) res(); });
   });
 }
 async function stopRelay() { if (relay) { relay.kill(); relay = null; await sleep(300); } }
@@ -125,13 +125,21 @@ const tab = (p, name) => p.click(`.tab[data-tab="${name}"]`);
 const lastMsg = p => p.js(`const m = [...document.querySelectorAll('#log .m')].pop(); return m ? m.textContent : ''`);
 const rowAction = (p, who, label) => p.js(`const r = [...document.querySelectorAll('#friendsBody .frow')].find(r => r.querySelector('.who b').textContent === ${JSON.stringify(who)});
   [...r.querySelectorAll('button')].find(b => b.textContent === ${JSON.stringify(label)}).click()`);
+async function pickTheme(p, name) {
+  await p.click('#settingsBtn');
+  await p.until(`$('modalCard').textContent.includes('Appearance')`, 'settings');
+  await p.js(`[...document.querySelectorAll('.theme-card')].find(c => c.querySelector('.tn').firstChild.textContent === ${JSON.stringify(name)}).click()`);
+  await p.until(`document.documentElement.dataset.theme === ${JSON.stringify(name.toLowerCase())}`, 'theme ' + name);
+  await sleep(150);
+  await p.clickText('Close');
+}
 const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; else delete document.hasFocus;`);
 
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await serveUi();
   await startRelay('');
-  const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${fs.mkdtempSync('/tmp/hush-uitest-')}`,
+  const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${fs.mkdtempSync('/tmp/pwc-uitest-')}`,
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--force-color-profile=srgb', 'about:blank'], { stdio: 'ignore' });
   procs.push(chrome);
   for (let i = 0; i < 50; i++) { try { await fetch(`http://127.0.0.1:${CDP_PORT}/json/version`); break; } catch (e) { await sleep(200); } }
@@ -154,7 +162,7 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.click('#setPinGo');
   assert((await maya.js(`return $('setPinErr').textContent`)).includes('4 to 12'), 'short PIN refused');
   await setPin(maya, '1234');
-  // The relay has no OWNER_KEY yet, so Hush walks Maya through adding it
+  // The relay has no OWNER_KEY yet, so privatewebchat walks Maya through adding it
   await maya.until(`$('modalCard').dataset.kind === 'setup'`, 'owner setup');
   await maya.shot('owner-key.png');
   const ownerKey = await maya.js(`return document.querySelector('#modalCard .box').textContent`);
@@ -187,8 +195,8 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
 
   // ── General: everyone in the network ──
   await nav(maya, 'General');
-  await maya.say('Welcome to Hush 👋 Everything in here is end-to-end encrypted.');
-  for (const p of [sam, leo]) { await nav(p, 'General'); await p.until(`$('log').textContent.includes('Welcome to Hush')`, 'General message'); }
+  await maya.say('Welcome to privatewebchat 👋 Everything in here is end-to-end encrypted.');
+  for (const p of [sam, leo]) { await nav(p, 'General'); await p.until(`$('log').textContent.includes('Welcome to privatewebchat')`, 'General message'); }
   await sam.say('This is so much faster than the old chat');
   await leo.until(`$('log').textContent.includes('so much faster')`, 'leo receives');
   await leo.say('So the server really can’t read any of this?');
@@ -259,9 +267,8 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.js(`$('msg').blur()`);
   await maya.shot('dm.png');
   await nav(maya, 'Friends'); await tab(maya, 'online');
-  await maya.shot('friends.png');
-  // A notification while blacked out would give Hush away, so there are none
-  await maya.js(`HushPanic()`);
+  // A notification while blacked out would give privatewebchat away, so there are none
+  await maya.js(`PwcPanic()`);
   await background(maya, true);
   const before = await maya.js(`return window.__notes.length`);
   await sam.say('Are you there?');
@@ -276,11 +283,19 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   // ── Settings, profile, safety numbers ──
   await maya.click('#settingsBtn');
   await maya.until(`$('modalCard').textContent.includes('Black-out key')`, 'settings');
-  await maya.js(`for (const b of document.querySelectorAll('#modalCard b')) if (b.textContent.includes('127.0.0.1')) b.textContent = 'your-hush.onrender.com'`);
+  await maya.js(`for (const b of document.querySelectorAll('#modalCard b')) if (b.textContent.includes('127.0.0.1')) b.textContent = 'your-privatewebchat.onrender.com'`);
   await maya.size(1100, 980);
   await maya.shot('settings.png');
   await maya.size(1100, 700);
   await maya.clickText('Close');
+  await nav(maya, 'Weekend plans');
+  for (const t of ['Matrix', 'Amber', 'Midnight']) {
+    await pickTheme(maya, t);
+    await maya.js(`$('msg').blur()`);
+    await maya.shot(`theme-${t.toLowerCase()}.png`);
+  }
+  await pickTheme(maya, 'Kali');
+  console.log('✓ themes switch from Settings → Appearance');
   await nav(maya, 'Friends'); await tab(maya, 'all');
   await maya.js(`[...document.querySelectorAll('#friendsBody .frow')].find(r => r.querySelector('.who b').textContent === 'sam').click()`);
   await maya.until(`$('modalCard').textContent.includes('Invited by')`, 'profile');
@@ -344,6 +359,17 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await online(dup);
   console.log('✓ a taken username is refused and the new member picks another');
 
+  // ── The theme is remembered, even on the lock screen ──
+  await pickTheme(leo, 'Matrix');
+  await leo.reload();
+  await leo.until(`!$('sUnlock').classList.contains('hidden')`, 'leo unlock screen');
+  assert.strictEqual(await leo.js(`return document.documentElement.dataset.theme`), 'matrix', 'theme kept on the lock screen');
+  await leo.fill('#unlockPin', '2468');
+  await leo.click('#unlockGo');
+  await leo.until(`!$('sMain').classList.contains('hidden')`, 'leo unlocked');
+  await online(leo);
+  console.log('✓ theme remembered across restarts, including the lock screen');
+
   // ── Wipe PIN ──
   await leo.click('#settingsBtn');
   await leo.until(`$('modalCard').textContent.includes('Wipe PIN')`, 'settings');
@@ -358,13 +384,14 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await leo.clickText('Set wipe PIN');
   await leo.until(`$('modalCard').textContent.includes('Wipe PIN set')`, 'wipe PIN set');
   await leo.clickText('Close');
-  await leo.js(`HushPanic()`);
+  await leo.js(`PwcPanic()`);
   await leo.fill('#blackPin', '0000');
   await leo.js(`$('blackPin').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
   await sleep(1500);
   await leo.until(`!$('sWelcome').classList.contains('hidden')`, 'fresh install after wipe');
   assert.strictEqual(await leo.js(`return sessionStorage.length`), 0, 'nothing left after wipe');
-  console.log('✓ wipe PIN erases everything and Hush opens as new');
+  assert.strictEqual(await leo.js(`return document.documentElement.dataset.theme`), 'kali', 'wipe resets the theme');
+  console.log('✓ wipe PIN erases everything and privatewebchat opens as new');
 
   // ── Removing a member ──
   await nav(maya, 'Friends'); await tab(maya, 'all');

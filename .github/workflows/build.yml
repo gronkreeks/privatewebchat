@@ -1,4 +1,4 @@
-# Builds Hush for Mac and Windows on every push (download them from the run's Artifacts).
+# Builds privatewebchat for Mac and Windows on every push (download them from the run's Artifacts).
 # Pushing a tag like v1.0.0 also publishes both files on the repo's Releases page.
 name: Build apps
 on:
@@ -13,7 +13,7 @@ jobs:
       - uses: actions/checkout@v4
       - run: app/build-mac.sh
       - uses: actions/upload-artifact@v4
-        with: { name: Hush-mac, path: app/dist/Hush-mac.zip }
+        with: { name: privatewebchat-mac, path: app/dist/privatewebchat-mac.zip }
   windows:
     runs-on: windows-2022
     steps:
@@ -22,13 +22,13 @@ jobs:
       - run: app\build-windows.bat
         shell: cmd
       - uses: actions/upload-artifact@v4
-        with: { name: Hush-windows, path: app/dist/Hush.exe }
+        with: { name: privatewebchat-windows, path: app/dist/privatewebchat.exe }
   tests:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20 }
+        with: { node-version: 22 }
       - run: cd server && npm ci
       - run: node tests/protocol.test.js && node tests/server.test.js && NO_SHOTS=1 node tests/ui/run.js
   release:

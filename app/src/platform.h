@@ -1,9 +1,9 @@
-// What Hush needs from the operating system. platform_mac.c and platform_win.c implement it.
-#ifndef HUSH_PLATFORM_H
-#define HUSH_PLATFORM_H
+// What privatewebchat needs from the operating system. platform_mac.c and platform_win.c implement it.
+#ifndef PWC_PLATFORM_H
+#define PWC_PLATFORM_H
 #include <stddef.h>
 
-// Files live in Hush's own folder: ~/Library/Application Support/Hush or %APPDATA%\Hush.
+// Files live in privatewebchat's own folder: ~/Library/Application Support/privatewebchat or %APPDATA%\privatewebchat.
 // plat_read returns a malloc'd, NUL-terminated copy, or NULL if the file doesn't exist.
 char *plat_read(const char *name, size_t *len);
 int plat_write(const char *name, const char *data, size_t len);   // replaces the file atomically, 0 on success
@@ -18,7 +18,7 @@ int plat_device_secret(unsigned char out[32], int *created);
 void plat_forget_device_secret(void);
 
 void plat_init(void *window);        // menus and window hooks, once the window exists
-// A panic key that also works while Hush is in the background. code is a KeyboardEvent.code
+// A panic key that also works while privatewebchat is in the background. code is a KeyboardEvent.code
 // such as "F9" or "Escape"; NULL removes it. Returns 1 if the key was registered.
 int plat_set_hotkey(const char *code, void (*fn)(void));
 void plat_attention(void);           // bounce the Dock icon / flash the taskbar button

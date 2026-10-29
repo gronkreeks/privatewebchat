@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="kali">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src wss: ws://localhost:* ws://127.0.0.1:*; base-uri 'none'; form-action 'none'">
-  <title>Hush</title>
+  <title>privatewebchat</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     <!-- First run -->
     <section id="sWelcome" class="screen hidden">
       <div class="card narrow">
-        <div class="brand"><span class="logo"></span>Hush</div>
+        <div class="brand"><span class="logo"></span>privatewebchat</div>
         <p class="lead">Private, end-to-end encrypted chat. Invite only.</p>
         <div class="choices">
           <button class="choice" id="goJoin"><b>I have an invite</b><span>Paste the invite code someone sent you</span></button>
@@ -24,7 +24,7 @@
       <div class="card narrow">
         <h1>Join with an invite</h1>
         <label class="lbl" for="joinCode">Invite code</label>
-        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="HUSH1.…"></textarea>
+        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="PWC1.…"></textarea>
         <p class="hint" id="joinFrom"></p>
         <label class="lbl" for="joinName">Username</label>
         <input id="joinName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. sam_k">
@@ -37,9 +37,9 @@
     <section id="sCreate" class="screen hidden">
       <div class="card narrow">
         <h1>Start a new network</h1>
-        <p class="hint">Deploy the Hush server on Render first (see the README), then enter its address. Render serves it over port 443.</p>
+        <p class="hint">Deploy the privatewebchat server on Render first (see the README), then enter its address. Render serves it over port 443.</p>
         <label class="lbl" for="createServer">Server address</label>
-        <input id="createServer" class="in" autocomplete="off" spellcheck="false" placeholder="your-hush.onrender.com">
+        <input id="createServer" class="in" autocomplete="off" spellcheck="false" placeholder="your-privatewebchat.onrender.com">
         <label class="lbl" for="createName">Username</label>
         <input id="createName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. maya">
         <p class="hint small">Letters, numbers, _ and . only. <b>You can't change it later.</b></p>
@@ -51,7 +51,7 @@
     <section id="sSetPin" class="screen hidden">
       <div class="card narrow">
         <h1>Choose a PIN</h1>
-        <p class="hint">You'll enter it every time you open Hush. It also encrypts everything Hush stores on this computer, so it can't be reset: if you forget it, you'll need a new invite.</p>
+        <p class="hint">You'll enter it every time you open privatewebchat. It also encrypts everything privatewebchat stores on this computer, so it can't be reset: if you forget it, you'll need a new invite.</p>
         <label class="lbl" for="newPin">PIN (4 to 12 digits)</label>
         <input id="newPin" class="in pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off">
         <label class="lbl" for="newPin2">Type it again</label>
@@ -64,7 +64,7 @@
     <!-- Every launch -->
     <section id="sUnlock" class="screen hidden">
       <div class="card tiny">
-        <div class="brand small"><span class="logo"></span>Hush</div>
+        <div class="brand small"><span class="logo"></span>privatewebchat</div>
         <label class="lbl" for="unlockPin">Enter your PIN</label>
         <input id="unlockPin" class="in pin big" type="password" inputmode="numeric" maxlength="12" autocomplete="off">
         <div class="err" id="unlockErr"></div>
@@ -84,7 +84,7 @@
     <section id="sMain" class="main hidden">
       <aside class="side">
         <div class="side-top">
-          <div class="brand small"><span class="logo"></span>Hush</div>
+          <div class="brand small"><span class="logo"></span>privatewebchat</div>
           <span class="dot" id="netDot" title="Offline"></span>
         </div>
         <div class="side-scroll">
@@ -132,9 +132,13 @@
           </header>
           <div class="log" id="log"></div>
           <div class="composer">
-            <textarea id="msg" rows="1" placeholder="Message" maxlength="2000"></textarea>
-            <span class="left" id="msgLeft"></span>
-            <button class="btn" id="sendBtn">Send</button>
+            <div class="prompt-top" id="promptTop"></div>
+            <div class="composer-row">
+              <span class="prompt-dollar">└─$</span>
+              <textarea id="msg" rows="1" placeholder="Message" maxlength="2000"></textarea>
+              <span class="left" id="msgLeft"></span>
+              <button class="btn" id="sendBtn">Send</button>
+            </div>
           </div>
           <div class="err pad" id="chatErr"></div>
         </div>

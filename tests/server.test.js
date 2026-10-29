@@ -7,7 +7,7 @@ let srv;
 function startServer(owner) {
   return new Promise(res => {
     srv = spawn('node', [require('path').join(__dirname, '../server/index.js')], { env: { ...process.env, PORT, OWNER_KEY: owner } });
-    srv.stdout.on('data', d => { if (String(d).includes('Hush relay on port')) res(); });
+    srv.stdout.on('data', d => { if (String(d).includes('privatewebchat relay on port')) res(); });
     srv.stderr.on('data', d => process.stderr.write('SERVER: ' + d));
   });
 }
@@ -24,7 +24,7 @@ function client(keys, cert, dir = [], removals = null) {
     ws.onmessage = async e => {
       const m = JSON.parse(e.data);
       if (m.t === 'hello') {
-        c.send({ t: 'auth', cert, sig: await P.sign(keys.sigPriv, ['hush-auth', m.nonce]), dir, removals });
+        c.send({ t: 'auth', cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir, removals });
         return;
       }
       const w = c.waiters.findIndex(x => x.t === m.t);

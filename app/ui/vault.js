@@ -1,4 +1,4 @@
-// Hush local storage. Everything this device keeps (your keys, members, rooms, messages and
+// privatewebchat local storage. Everything this device keeps (your keys, members, rooms, messages and
 // settings) is one AES-GCM blob in vault.json. Its key comes from PBKDF2 over your PIN together
 // with a device secret kept in the Mac Keychain or Windows DPAPI, so a copied vault file can't be
 // cracked by guessing PINs elsewhere. The wipe PIN is checked against a separate hash stored next
@@ -6,7 +6,7 @@
 const Vault = (() => {
   const ITER = 600000;
   const te = new TextEncoder(), td = new TextDecoder();
-  const { toB64, fromB64 } = HushProto;
+  const { toB64, fromB64 } = PwcProto;
   const rand = n => crypto.getRandomValues(new Uint8Array(n));
   let header = null;    // what's in vault.json
   let key = null;       // AES-GCM key for the blob, only while unlocked
@@ -17,7 +17,7 @@ const Vault = (() => {
 
   async function deviceSecret() {
     if (secret) return secret;
-    const r = await window.hush_device_secret();
+    const r = await window.pwc_device_secret();
     if (!r) throw new Error('keychain');
     secret = r;
     return r;
@@ -32,7 +32,7 @@ const Vault = (() => {
   const keyFrom = bits => crypto.subtle.importKey('raw', bits, 'AES-GCM', false, ['encrypt', 'decrypt']);
 
   async function load() {
-    const s = await window.hush_read_vault();
+    const s = await window.pwc_read_vault();
     header = null;
     if (s) { try { header = JSON.parse(s); } catch (e) { header = null; } }
     return !!header;
@@ -47,7 +47,7 @@ const Vault = (() => {
     const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, te.encode(JSON.stringify(data)));
     if (key !== k) return;   // locked or wiped meanwhile
     header = { ...header, iv: toB64(iv), ct: toB64(ct) };
-    if (!(await window.hush_write_vault(JSON.stringify(header)))) throw new Error("Couldn't save");
+    if (!(await window.pwc_write_vault(JSON.stringify(header)))) throw new Error("Couldn't save");
   }
   function save() {
     clearTimeout(saveT);
@@ -98,7 +98,9 @@ const Vault = (() => {
     data.settings.wipeSet = !!pin;
     await saveNow();
   }
+  // The theme sits beside the encrypted blob so the lock screen can use it
+  async function setTheme(t) { header = { ...header, theme: t }; await saveNow(); }
   function lock() { clearTimeout(saveT); key = null; pinHash = null; data = null; return saving.catch(() => { }); }
 
-  return { load, orphaned, create, unlock, check, setPin, setWipePin, save, saveNow, lock, get data() { return data; }, get exists() { return !!header; } };
+  return { load, orphaned, create, unlock, check, setPin, setWipePin, setTheme, save, saveNow, lock, get data() { return data; }, get exists() { return !!header; }, get theme() { return header && header.theme; } };
 })();

@@ -1,7 +1,7 @@
-# Render blueprint for the Hush relay. Render serves it on port 443 at wss://<name>.onrender.com.
+# Render blueprint for the privatewebchat relay. Render serves it on port 443 at wss://<name>.onrender.com.
 services:
   - type: web
-    name: hush-server
+    name: privatewebchat
     runtime: node
     plan: free
     buildCommand: cd server && npm ci
