@@ -28,6 +28,10 @@ void plat_notify_setup(void);
 void plat_notify(const char *title, const char *body);
 void plat_shutdown(void);            // tidy up (the tray icon) before quitting
 void plat_copy(const char *text);
+char *plat_paste(void);              // malloc'd clipboard text, or NULL
 void plat_fatal(const char *msg);
+#ifdef PWC_SELFTEST
+const char *plat_debug_menu(void);
+#endif
 
 #endif

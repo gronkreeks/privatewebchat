@@ -16,4 +16,4 @@ PORT=18765 node ../server/index.js > build/selftest-server.log 2>&1 &
 SERVER=$!
 trap 'kill $SERVER 2>/dev/null' EXIT
 sleep 1
-PWC_SELFTEST_WS=ws://127.0.0.1:18765 build/pwc-selftest
+PWC_SELFTEST_WS=ws://127.0.0.1:18765 PWC_SELFTEST_INVITE="$PWC_SELFTEST_INVITE" build/pwc-selftest

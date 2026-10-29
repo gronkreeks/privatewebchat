@@ -189,13 +189,22 @@
     if (text !== $('joinCode').value) return;   // changed while checking
     checked = owner ? { inv, owner } : null;
     const expired = checked && inv.g.exp < Date.now();
-    err('joinErr', !text.trim() ? '' : !checked ? "That invite code isn't valid" : expired ? 'That invite code has expired. Ask for a new one.' : '');
+    err('joinErr', !text.trim() ? '' : !text.trim().startsWith(INVITE_PREFIX) ? `That's not an invite code. Invite codes start with ${INVITE_PREFIX}`
+      : !checked ? "That invite code isn't valid. Make sure you copied all of it." : expired ? 'That invite code has expired. Ask for a new one.' : '');
+    $('pasteRow').classList.toggle('hidden', !!checked);
     const show2 = !!checked && !expired;
     const was = !$('joinMore').classList.contains('hidden');
     $('joinMore').classList.toggle('hidden', !show2);
     $('joinRow').classList.toggle('hidden', !show2);
     if (show2 && !was) setTimeout(() => $('joinName').focus(), 0);
   });
+  // Reads the clipboard straight from the system, in case Cmd+V / Ctrl+V doesn't reach the box
+  $('pasteBtn').onclick = async () => {
+    const t = await window.pwc_paste();
+    if (!t) return err('joinErr', 'The clipboard is empty. Copy your invite code first.');
+    $('joinCode').value = t.trim();
+    $('joinCode').dispatchEvent(new Event('input'));
+  };
   $('joinName').addEventListener('keydown', e => { if (e.key === 'Enter') $('joinNext').click(); });
   $('joinName').addEventListener('input', () => err('joinErr', ''));
   $('joinNext').onclick = () => {

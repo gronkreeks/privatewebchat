@@ -176,6 +176,19 @@ void plat_notify(const char *title, const char *body) {
 }
 void plat_shutdown(void) { if (tray_on) { nid.uFlags = 0; Shell_NotifyIconW(NIM_DELETE, &nid); tray_on = 0; } }
 
+char *plat_paste(void) {
+  char *out = NULL;
+  if (!OpenClipboard(hw)) return NULL;
+  HANDLE h = GetClipboardData(CF_UNICODETEXT);
+  const wchar_t *w = h ? (const wchar_t *)GlobalLock(h) : NULL;
+  if (w) {
+    int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+    if (n > 0 && (out = malloc((size_t)n))) WideCharToMultiByte(CP_UTF8, 0, w, -1, out, n, NULL, NULL);
+    GlobalUnlock(h);
+  }
+  CloseClipboard();
+  return out;
+}
 void plat_fatal(const char *msg) { MessageBoxA(NULL, msg, "privatewebchat", MB_OK | MB_ICONERROR); }
 
 // ──────────── Background panic key ────────────

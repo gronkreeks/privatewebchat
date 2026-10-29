@@ -17,6 +17,7 @@
   window.pwc_attention = async () => null;
   window.pwc_title = async t => { document.title = t; };
   window.pwc_copy = async t => { window.__copied = t; };
+  window.pwc_paste = async () => window.__clipboard || null;
 })();
 // Desktop notifications are recorded so the test can check them
 window.__notes = [];

@@ -161,6 +161,11 @@ void plat_copy(const char *text) {
   ((long (*)(id, SEL))objc_msgSend)(pb, S("clearContents"));
   ((BOOL (*)(id, SEL, id, id))objc_msgSend)(pb, S("setString:forType:"), str(text), str("public.utf8-plain-text"));
 }
+char *plat_paste(void) {
+  id s = ((id (*)(id, SEL, id))objc_msgSend)(msg0(C("NSPasteboard"), "generalPasteboard"), S("stringForType:"), str("public.utf8-plain-text"));
+  const char *u = s ? ((const char *(*)(id, SEL))objc_msgSend)(s, S("UTF8String")) : NULL;
+  return u ? strdup(u) : NULL;
+}
 void plat_fatal(const char *msg) { fprintf(stderr, "%s\n", msg); }
 
 // ──────────── Notifications (UserNotifications framework) ────────────
@@ -234,3 +239,22 @@ int plat_set_hotkey(const char *code, void (*fn)(void)) {
   }
   return 0;
 }
+
+#ifdef PWC_SELFTEST
+// Test builds only: describes the menu bar, to check that Cmd+V has a Paste item to go to
+const char *plat_debug_menu(void) {
+  static char buf[512];
+  id bar = msg0(app(), "mainMenu");
+  if (!bar) return "no main menu";
+  long n = ((long (*)(id, SEL))objc_msgSend)(bar, S("numberOfItems"));
+  snprintf(buf, sizeof buf, "%ld menus", n);
+  for (long i = 0; i < n; i++) {
+    id item = ((id (*)(id, SEL, long))objc_msgSend)(bar, S("itemAtIndex:"), i);
+    id sub = msg0(item, "submenu");
+    const char *t = sub ? ((const char *(*)(id, SEL))objc_msgSend)(msg0(sub, "title"), S("UTF8String")) : "?";
+    strncat(buf, " | ", sizeof buf - strlen(buf) - 1);
+    strncat(buf, t, sizeof buf - strlen(buf) - 1);
+  }
+  return buf;
+}
+#endif

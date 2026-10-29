@@ -322,6 +322,13 @@ static void b_set_panic(const char *id, const char *req, void *arg) {
   free(code);
 }
 static void b_attention(const char *id, const char *req, void *arg) { (void)req; (void)arg; plat_attention(); ret(id, "null"); }
+static void b_paste(const char *id, const char *req, void *arg) {
+  (void)req; (void)arg;
+  char *t = plat_paste();
+  char *q = t ? json_quote(t, strlen(t)) : NULL;
+  ret(id, q ? q : "null");
+  free(q); free(t);
+}
 static void b_notify_setup(const char *id, const char *req, void *arg) { (void)req; (void)arg; plat_notify_setup(); ret(id, "null"); }
 static void b_notify(const char *id, const char *req, void *arg) {
   (void)arg;
@@ -354,6 +361,7 @@ static void b_selftest_done(const char *id, const char *req, void *arg) {
   (void)arg;
   char *r = json_arg(req, 0);
   printf("SELFTEST %s\n", r ? r : "null");
+  printf("MENU %s\n", plat_debug_menu());
   fflush(stdout);
   free(r);
   ret(id, "null");
@@ -371,10 +379,20 @@ static const char *SELFTEST_JS =
   "    r.pbkdf2ms = Math.round(performance.now() - t);"
   "  } catch (e) { r.err = String(e); }"
   "  r.pinWait = await pwc_pin_start();"
+  "  r.clipboard = String(await pwc_paste() || '').slice(0, 5);"
   "  r.screen = [...document.querySelectorAll('section')].filter(s => !s.classList.contains('hidden')).map(s => s.id).join();"
   "  const url = new URLSearchParams(location.hash.slice(1)).get('ws');"
   "  if (url) await new Promise(res => { const ws = new WebSocket(url); ws.onmessage = e => { r.ws = JSON.parse(e.data).t; ws.close(); res(); };"
   "    ws.onerror = () => { r.ws = 'error'; res(); }; setTimeout(res, 8000); });"
+  "  const code = new URLSearchParams(location.hash.slice(1)).get('invite');"
+  "  if (code) { const t = document.getElementById('joinCode'); t.value = code; t.dispatchEvent(new Event('input'));"
+  "    await new Promise(res => setTimeout(res, 1500));"
+  "    r.inviteErr = document.getElementById('joinErr').textContent;"
+  "    r.usernameShown = !document.getElementById('joinMore').classList.contains('hidden');"
+  "    try { const s = code.replace(/\\s+/g, ''); const inv = JSON.parse(atob(s.slice(5).replace(/-/g, '+').replace(/_/g, '/')));"
+  "      const c = inv.g.from; r.certOk = !!(await PwcProto.verifyCert(c, c.m.sig));"
+  "      r.sigOk = await PwcProto.verify(c.m.sig, ['pwc-invite', inv.g.ik, inv.g.exp], inv.g.s);"
+  "    } catch (e) { r.inviteEx = String(e); } }"
   "  pwc_selftest_done(JSON.stringify(r));"
   "});";
 #endif
@@ -406,6 +424,7 @@ int main(void) {
   webview_bind(w, "pwc_attention", b_attention, NULL);
   webview_bind(w, "pwc_title", b_title, NULL);
   webview_bind(w, "pwc_copy", b_copy, NULL);
+  webview_bind(w, "pwc_paste", b_paste, NULL);
   webview_bind(w, "pwc_notify_setup", b_notify_setup, NULL);
   webview_bind(w, "pwc_notify", b_notify, NULL);
   webview_dispatch(w, after_start, NULL);
@@ -414,9 +433,14 @@ int main(void) {
 #ifdef PWC_SELFTEST
   webview_bind(w, "pwc_selftest_done", b_selftest_done, NULL);
   webview_init(w, SELFTEST_JS);
-  if (getenv("PWC_SELFTEST_WS")) { strcat(url, "#ws="); strncat(url, getenv("PWC_SELFTEST_WS"), 200); }
+  static char big[4096];
+  snprintf(big, sizeof big, "%s#ws=%s&invite=%s", url, getenv("PWC_SELFTEST_WS") ? getenv("PWC_SELFTEST_WS") : "", getenv("PWC_SELFTEST_INVITE") ? getenv("PWC_SELFTEST_INVITE") : "");
 #endif
+#ifdef PWC_SELFTEST
+  webview_navigate(w, big);
+#else
   webview_navigate(w, url);
+#endif
   webview_run(w);
   plat_set_hotkey(NULL, NULL);
   plat_shutdown();
