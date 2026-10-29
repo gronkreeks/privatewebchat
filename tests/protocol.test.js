@@ -11,10 +11,13 @@ const assert = require('assert');
   const ac = await P.acceptInvite(inv, alice, 'Alice');
   const ai = await P.verifyCert(ac, ok.sigPub);
   assert(ai && ai.by === oi.id && ai.ik === inv.g.ik, 'alice cert');
-  const inv2 = await P.makeInvite(ac, alice, 1);
+  // Only the owner can invite: an invite made by a member doesn't work
+  const memberInv = await P.makeInvite(ac, alice, 1);
+  assert(!(await P.verifyCert(await P.acceptInvite(memberInv, bob, 'Bob'), ok.sigPub)), 'member-made invite rejected');
+  const inv2 = await P.makeInvite(oc, ok, 1);
   const bc = await P.acceptInvite(inv2, bob, 'Bob');
   const bi = await P.verifyCert(JSON.parse(JSON.stringify(bc)), ok.sigPub);
-  assert(bi && bi.chain.join() === [oi.id, ai.id].join(), 'bob chain');
+  assert(bi && bi.chain.join() === oi.id && bi.by === oi.id, 'bob invited by the owner');
   // tampering
   const t1 = JSON.parse(JSON.stringify(bc)); t1.m.name = 'Mallory';
   assert(!(await P.verifyCert(t1, ok.sigPub)), 'renamed cert rejected');
@@ -28,7 +31,7 @@ const assert = require('assert');
   // removals
   const rem = await P.signRemovals(ok, 1, [ai.id]);
   const rr = await P.checkRemovals(JSON.parse(JSON.stringify(rem)), ok.sigPub);
-  assert(rr && P.isRemoved(bi, new Set(rr.ids)) && P.isRemoved(ai, new Set(rr.ids)) && !P.isRemoved(oi, new Set(rr.ids)), 'removal subtree');
+  assert(rr && P.isRemoved(ai, new Set(rr.ids)) && !P.isRemoved(bi, new Set(rr.ids)) && !P.isRemoved(oi, new Set(rr.ids)), 'removal');
   assert(!(await P.checkRemovals(await P.signRemovals(alice, 2, [oi.id]), ok.sigPub)), 'non-owner removal rejected');
   // messages
   const boxA = P.createBox(ai.id, alice.ecdhPriv), boxB = P.createBox(bi.id, bob.ecdhPriv), boxO = P.createBox(oi.id, ok.ecdhPriv);

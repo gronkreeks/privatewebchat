@@ -7,6 +7,7 @@
   const P = PwcProto;
   const $ = id => document.getElementById(id);
   const MAX_HISTORY = 3000, SHOWN = 400;
+  const DM_TTL = 24 * 3600000;   // direct messages are deleted after 24 hours, for privacy and to save space
 
   let D = null;        // the unlocked vault (Vault.data)
   const S = {
@@ -32,7 +33,7 @@
     for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : String(k));
     return e;
   }
-  const screens = ['sWelcome', 'sJoin', 'sCreate', 'sSetPin', 'sUnlock', 'sGone', 'sMain'];
+  const screens = ['sWelcome', 'sCreate', 'sSetPin', 'sUnlock', 'sGone', 'sMain'];
   function show(id) { for (const s of screens) $(s).classList.toggle('hidden', s !== id); const f = $(id).querySelector('input, textarea'); if (f) setTimeout(() => f.focus(), 30); }
   const err = (id, t, ok) => { $(id).textContent = t || ''; $(id).classList.toggle('ok', !!ok); };
   const hue = s => { let x = 0; for (const c of s) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 360; };
@@ -71,10 +72,10 @@
   // ──────────── Themes ────────────
   // Saved beside the vault (not inside it), so the lock screen already has your theme
   const THEMES = [
-    { id: 'kali', name: 'Kali', desc: 'Dark terminal, Kali blue', bg: '#0b0d12', fg: '#d7e0ea', a: '#367bf0', b: '#3dff8f', mono: true },
-    { id: 'matrix', name: 'Matrix', desc: 'Green on black', bg: '#000000', fg: '#00ff41', a: '#00ff41', b: '#00bf31', mono: true },
-    { id: 'amber', name: 'Amber', desc: 'Retro amber screen', bg: '#0c0800', fg: '#ffb000', a: '#ffb000', b: '#ffd166', mono: true },
-    { id: 'midnight', name: 'Midnight', desc: 'The original navy and gold', bg: '#0f1e3d', fg: '#ffffff', a: '#27ae60', b: '#f5c518', mono: false },
+    { id: 'kali', name: 'Kali', desc: 'Black and white', bg: '#000000', fg: '#ededed', a: '#367bf0', b: '#ffffff', mono: false, prompt: true },
+    { id: 'matrix', name: 'Matrix', desc: 'Green on black', bg: '#000000', fg: '#00ff41', a: '#00ff41', b: '#7dffa0', mono: true, prompt: true },
+    { id: 'amber', name: 'Amber', desc: 'Retro amber', bg: '#0c0800', fg: '#ffb000', a: '#ffb000', b: '#ffd166', mono: true, prompt: true },
+    { id: 'midnight', name: 'Midnight', desc: 'Navy and gold', bg: '#0f1e3d', fg: '#ffffff', a: '#27ae60', b: '#f5c518', mono: false, prompt: false },
   ];
   function applyTheme(id) { document.documentElement.dataset.theme = THEMES.some(t => t.id === id) ? id : 'kali'; }
   function themePicker() {
@@ -85,10 +86,10 @@
         for (const c of cards) c.classList.toggle('on', c === cards[THEMES.indexOf(t)]);
         try { await Vault.setTheme(t.id); } catch (e) { }
       },
-    }, h('div', { class: 'sw', style: `background:${t.bg};color:${t.fg};border:1px solid ${t.a}55;font-family:${t.mono ? "ui-monospace,Menlo,Consolas,monospace" : "'Nunito','Segoe UI',system-ui,sans-serif"}` },
-      h('div', { style: `color:${t.a};font-weight:800` }, t.mono ? '┌──(you㉿pwc)-[~]' : '# General'),
-      h('div', {}, h('span', { style: `color:${t.b};font-weight:800` }, t.mono ? '<maya> ' : 'maya '), 'see you there'),
-      h('div', { style: `color:${t.a}` }, t.mono ? '└─$ _' : '')),
+    }, h('div', { class: 'sw', style: `background:${t.bg};color:${t.fg};border:1px solid ${t.a}55;font-family:${t.mono ? 'ui-monospace,Menlo,Consolas,monospace' : '-apple-system,"Segoe UI",system-ui,sans-serif'}` },
+      h('div', { style: `color:${t.a};font-weight:700;font-family:ui-monospace,Menlo,Consolas,monospace` }, t.prompt ? '┌──(you㉿pwc)-[~]' : '# General'),
+      h('div', {}, h('span', { style: `color:${t.b};font-weight:700` }, t.mono ? '<maya> ' : 'maya '), 'see you there'),
+      h('div', { style: `color:${t.a};font-family:ui-monospace,Menlo,Consolas,monospace` }, t.prompt ? '└─$' : '')),
     h('div', { class: 'tn' }, t.name, h('small', { text: t.desc }))));
     return h('div', { class: 'themes' }, cards);
   }
@@ -156,7 +157,7 @@
 
   // ── First run ──
   let pending = null;   // what setup will create once a PIN is chosen
-  $('goJoin').onclick = () => { err('joinErr', ''); show('sJoin'); };
+  // Friends get an invite code from the developer. Starting a network is only for the developer.
   $('goCreate').onclick = () => { err('createErr', ''); show('sCreate'); };
   for (const b of document.querySelectorAll('[data-back]')) b.onclick = () => show('sWelcome');
   const usernameProblem = n => n.length < 2 ? 'Usernames need at least 2 characters' : !P.USERNAME_RE.test(n) ? 'Usernames can only use letters, numbers, _ and .' : null;
@@ -224,7 +225,7 @@
 
   digitsOnly($('newPin')); digitsOnly($('newPin2'));
   function pinScreen() { $('newPin').value = ''; $('newPin2').value = ''; err('setPinErr', ''); show('sSetPin'); }
-  $('setPinBack').onclick = () => show(pending && pending.kind === 'create' ? 'sCreate' : 'sJoin');
+  $('setPinBack').onclick = () => show(pending && pending.kind === 'create' ? 'sCreate' : 'sWelcome');
   $('newPin2').addEventListener('keydown', e => { if (e.key === 'Enter') $('setPinGo').click(); });
   $('setPinGo').onclick = async () => {
     const a = $('newPin').value, b = $('newPin2').value;
@@ -268,6 +269,7 @@
     S.removed = new Set(D.removals ? D.removals.ids : []);
     for (const c of Object.values(D.dir)) await learn(c, true);
     S.view = Object.values(D.friends).includes('friend') || Object.keys(S.info).length > 1 ? 'friends' : 'general';
+    pruneDms();
     await applyPanicKey();
     try { window.pwc_notify_setup(); } catch (e) { }
     show('sMain');
@@ -421,7 +423,7 @@
     let rid;
     if (p.room === 'general') rid = 'general';
     else if (p.room === dmId(env.from)) {
-      if (!isFriend(env.from)) return;   // direct messages are for friends only
+      if (!isFriend(env.from) || env.at < Date.now() - DM_TTL) return;   // friends only, and never older than 24 hours
       rid = p.room; ensureDm(env.from);
     } else {
       if (p.meta) applyRoom(p.meta, env.from);
@@ -471,6 +473,25 @@
     renderSidebar();
   }
   const sysMsg = (rid, text) => addMsg(rid, { sys: true, text, at: Date.now() });
+  // Deletes direct messages older than 24 hours. Runs every minute, on focus and when a chat opens.
+  function pruneDms() {
+    if (!S.unlocked) return;
+    const cutoff = Date.now() - DM_TTL;
+    let changed = false;
+    for (const r of Object.values(D.rooms)) {
+      const list = r.kind === 'dm' && D.msgs[r.id];
+      if (!list || !list.length || list[0].at > cutoff) continue;
+      D.msgs[r.id] = list.filter(m => m.at > cutoff || m.st === 'pending');
+      if (D.unread[r.id] > D.msgs[r.id].length) D.unread[r.id] = D.msgs[r.id].length;
+      changed = true;
+    }
+    if (!changed) return;
+    Vault.save();
+    renderSidebar();
+    if (D.rooms[S.view] && D.rooms[S.view].kind === 'dm') renderLog();
+  }
+  setInterval(pruneDms, 60000);
+  window.addEventListener('focus', pruneDms);
   // Desktop notifications, only while privatewebchat is in the background and never while blacked out
   function notify(title, body) {
     if (!D.settings.notify || S.black || document.hasFocus()) return;
@@ -540,7 +561,8 @@
     if (!to.length) return false;
     const sealed = await S.box.seal(payload, to);
     if (ref) sentRefs.set(ref, r.id);
-    return wsSend({ t: 'send', ref, ...sealed });
+    // The server also drops undelivered DMs after 24 hours
+    return wsSend({ t: 'send', ref, ttl: r.kind === 'dm' && payload.k === 'msg' ? DM_TTL : undefined, ...sealed });
   }
   async function sendMsg() {
     const text = $('msg').value.replace(/\s+$/, '').replace(/^\n+/, '');
@@ -571,6 +593,7 @@
   function render() {
     if (!S.unlocked) return;
     $('meBox').replaceChildren(avatar(D.me, 'sm', true), h('span', { class: 'nm', text: nameOf(D.me) }));
+    $('inviteBtn').classList.toggle('hidden', !S.isOwner);
     $('panicKbd').textContent = keyLabel(D.settings.panicCode);
     renderSidebar();
     const friends = S.view === 'friends';
@@ -687,7 +710,7 @@
       h('div', { class: 'err fnote' }),
       h('div', { class: 'fhead gap', text: `Everyone in this network — ${others.length}` }),
       ...(others.length ? others.map(id => personRow(id, status(id) + (S.info[id] && !S.info[id].by ? ' · Owner' : ''), [stateFor(id)]))
-        : [h('div', { class: 'empty' }, h('b', {}, "It's just you so far."), 'Use Invite someone to bring your friends in.')]));
+        : [h('div', { class: 'empty' }, h('b', {}, "It's just you so far."), S.isOwner ? 'Use Invite someone to bring your friends in.' : 'More people will show up here as the developer invites them.')]));
     if (refocus) setTimeout(() => input.focus(), 0);
   }
 
@@ -699,7 +722,7 @@
     $('roomAv').replaceChildren(r.kind === 'dm' ? avatar(r.with, '', true) : r.kind === 'group' ? groupAvatar(r) : '');
     $('roomTitle').textContent = (r.kind === 'general' ? '# ' : '') + chatName(r);
     $('roomSub').textContent = r.kind === 'general' ? `Everyone · ${count} ${count === 1 ? 'member' : 'members'}`
-      : r.kind === 'dm' ? (isOnline(r.with) ? 'Online' : 'Offline')
+      : r.kind === 'dm' ? (isOnline(r.with) ? 'Online' : 'Offline') + ' · messages disappear after 24 hours'
       : r.members.map(nameOf).join(', ');
     const a = $('roomAction');
     a.classList.toggle('hidden', r.kind === 'general');
@@ -716,7 +739,7 @@
     if (from > 0) log.append(h('button', { class: 'link older', onclick: () => { shownAll = true; renderLog(); log.scrollTop = 0; } }, `Show ${from} older messages`));
     const r = D.rooms[S.view];
     if (!list.length) log.append(h('div', { class: 'sys', text: r.kind === 'general' ? 'This is the start of General. Everyone in the network can read what you send here, and nobody else can, not even the server.'
-      : r.kind === 'dm' ? `This is the start of your conversation with ${nameOf(r.with)}. Only the two of you can read it.` : 'This is the start of the group. Only its members can read it.' }));
+      : r.kind === 'dm' ? `This is your conversation with ${nameOf(r.with)}. Only the two of you can read it, and messages are deleted after 24 hours.` : 'This is the start of the group. Only its members can read it.' }));
     for (let i = from; i < list.length; i++) appendLine(list[i], true);
     log.scrollTop = log.scrollHeight;
   }
@@ -749,6 +772,7 @@
   }
   function openRoom(id) {
     if (!D.rooms[id]) return;
+    pruneDms();
     S.view = id; shownAll = false;
     delete D.unread[id];
     Vault.save();
@@ -861,7 +885,7 @@
       },
     }, 'Create invite');
     modal('Invite someone',
-      h('p', { class: 'hint' }, 'An invite lets ', h('b', {}, 'one person'), ' join. Anyone who gets the code can use it, so send it to them privately. They paste it into privatewebchat after installing it.'),
+      h('p', { class: 'hint' }, 'An invite lets ', h('b', {}, 'one person'), ' join your server. Anyone who gets the code can use it, so send it to them privately. They download privatewebchat from GitHub, open it and paste the code.'),
       h('label', { class: 'lbl', text: 'Expires after' }), exp, h('div', { class: 'row' }, make), out,
       inviteHistory(), closeBtn());
   };
@@ -883,8 +907,7 @@
       h('label', { class: 'lbl', text: 'Yours' }), h('div', { class: 'box mono', text: mine }), closeBtn());
   }
   function removeMember(id) {
-    const out = Object.values(S.info).filter(i => i.id === id || i.chain.includes(id)).map(i => i.name);
-    ask(`Remove ${nameOf(id)} from the network?`, out.length > 1 ? `This also removes the people they invited: ${out.slice(1).join(', ')}. They'll be disconnected and can't come back without a new invite.` : "They'll be disconnected and can't come back without a new invite.", 'Remove', async () => {
+    ask(`Remove ${nameOf(id)} from the network?`, "They'll be disconnected and can't come back without a new invite.", 'Remove', async () => {
       const prev = D.removals || { v: 0, ids: [] };
       const r = await P.signRemovals(D.keys, prev.v + 1, [...new Set([...prev.ids, id])]);
       await applyRemovals(r);

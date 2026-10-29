@@ -1,43 +1,40 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="880" height="300" viewBox="0 0 880 300" font-family="ui-monospace, 'SF Mono', Menlo, Consolas, monospace">
+<svg xmlns="http://www.w3.org/2000/svg" width="880" height="320" viewBox="0 0 880 320" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif">
   <defs>
-    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#3dff8f"/></marker>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#6ea2ff"/></marker>
   </defs>
-  <rect width="880" height="300" rx="8" fill="#0b0d12"/>
+  <rect width="880" height="320" rx="8" fill="#000000"/>
 
-  <!-- Owner -->
-  <rect x="24" y="44" width="170" height="96" rx="6" fill="#10141b" stroke="#367bf0" stroke-width="2"/>
-  <text x="109" y="78" fill="#fff" font-size="18" font-weight="800" text-anchor="middle">maya</text>
-  <text x="109" y="100" fill="#367bf0" font-size="12" font-weight="800" text-anchor="middle">OWNER</text>
-  <text x="109" y="122" fill="#8b96a5" font-size="12" text-anchor="middle">key = OWNER_KEY</text>
+  <!-- Developer -->
+  <rect x="24" y="64" width="190" height="104" rx="6" fill="#0c0c0c" stroke="#367bf0" stroke-width="2"/>
+  <text x="119" y="100" fill="#fff" font-size="18" font-weight="700" text-anchor="middle">you</text>
+  <text x="119" y="122" fill="#6ea2ff" font-size="12" font-weight="700" text-anchor="middle">DEVELOPER · OWNER</text>
+  <text x="119" y="146" fill="#9b9b9b" font-size="12" text-anchor="middle">key = OWNER_KEY on Render</text>
 
-  <!-- Invite 1 -->
-  <rect x="240" y="62" width="150" height="60" rx="30" fill="rgba(61,255,143,0.08)" stroke="rgba(61,255,143,0.45)" stroke-dasharray="5 4"/>
-  <text x="315" y="88" fill="#3dff8f" font-size="13" font-weight="800" text-anchor="middle">invite</text>
-  <text x="315" y="106" fill="#8b96a5" font-size="11" text-anchor="middle">one use · expires</text>
+  <!-- Invites -->
+  <rect x="300" y="34" width="170" height="54" rx="27" fill="rgba(110,162,255,0.08)" stroke="rgba(110,162,255,0.45)" stroke-dasharray="5 4"/>
+  <text x="385" y="58" fill="#6ea2ff" font-size="13" font-weight="700" text-anchor="middle">invite code</text>
+  <text x="385" y="76" fill="#9b9b9b" font-size="11" text-anchor="middle">one use · expires</text>
+  <rect x="300" y="144" width="170" height="54" rx="27" fill="rgba(110,162,255,0.08)" stroke="rgba(110,162,255,0.45)" stroke-dasharray="5 4"/>
+  <text x="385" y="168" fill="#6ea2ff" font-size="13" font-weight="700" text-anchor="middle">invite code</text>
+  <text x="385" y="186" fill="#9b9b9b" font-size="11" text-anchor="middle">one use · expires</text>
 
-  <!-- Sam -->
-  <rect x="436" y="44" width="170" height="96" rx="6" fill="#10141b" stroke="#2c3647"/>
-  <text x="521" y="82" fill="#fff" font-size="18" font-weight="800" text-anchor="middle">sam</text>
-  <text x="521" y="108" fill="#8b96a5" font-size="12" text-anchor="middle">invited by maya</text>
+  <!-- Friends -->
+  <rect x="556" y="34" width="300" height="54" rx="6" fill="#0c0c0c" stroke="#2c2c2c"/>
+  <text x="576" y="58" fill="#fff" font-size="15" font-weight="700">sam</text>
+  <text x="576" y="77" fill="#9b9b9b" font-size="12">downloads the app, pastes the code</text>
+  <rect x="556" y="144" width="300" height="54" rx="6" fill="#0c0c0c" stroke="#2c2c2c"/>
+  <text x="576" y="168" fill="#fff" font-size="15" font-weight="700">leo</text>
+  <text x="576" y="187" fill="#9b9b9b" font-size="12">downloads the app, pastes the code</text>
 
-  <!-- Invite 2 -->
-  <rect x="652" y="62" width="100" height="60" rx="30" fill="rgba(61,255,143,0.08)" stroke="rgba(61,255,143,0.45)" stroke-dasharray="5 4"/>
-  <text x="702" y="97" fill="#3dff8f" font-size="13" font-weight="800" text-anchor="middle">invite</text>
+  <path d="M216 100 C255 100 255 61 294 61" stroke="#6ea2ff" stroke-width="2.5" fill="none" marker-end="url(#a)"/>
+  <path d="M216 132 C255 132 255 171 294 171" stroke="#6ea2ff" stroke-width="2.5" fill="none" marker-end="url(#a)"/>
+  <line x1="472" y1="61" x2="550" y2="61" stroke="#6ea2ff" stroke-width="2.5" marker-end="url(#a)"/>
+  <line x1="472" y1="171" x2="550" y2="171" stroke="#6ea2ff" stroke-width="2.5" marker-end="url(#a)"/>
+  <text x="250" y="90" fill="#6ea2ff" font-size="11" font-weight="700" text-anchor="middle">signs</text>
+  <text x="510" y="52" fill="#6ea2ff" font-size="11" font-weight="700" text-anchor="middle">joins</text>
+  <text x="510" y="162" fill="#6ea2ff" font-size="11" font-weight="700" text-anchor="middle">joins</text>
 
-  <!-- Leo -->
-  <rect x="780" y="44" width="80" height="96" rx="6" fill="#10141b" stroke="#2c3647"/>
-  <text x="820" y="98" fill="#fff" font-size="16" font-weight="800" text-anchor="middle">leo</text>
-
-  <line x1="196" y1="92" x2="234" y2="92" stroke="#3dff8f" stroke-width="2.5" marker-end="url(#a)"/>
-  <line x1="392" y1="92" x2="430" y2="92" stroke="#3dff8f" stroke-width="2.5" marker-end="url(#a)"/>
-  <line x1="608" y1="92" x2="646" y2="92" stroke="#3dff8f" stroke-width="2.5" marker-end="url(#a)"/>
-  <line x1="754" y1="92" x2="774" y2="92" stroke="#3dff8f" stroke-width="2.5" marker-end="url(#a)"/>
-  <text x="215" y="80" fill="#3dff8f" font-size="10" font-weight="800" text-anchor="middle">signs</text>
-  <text x="411" y="80" fill="#3dff8f" font-size="10" font-weight="800" text-anchor="middle">signs</text>
-  <text x="627" y="80" fill="#3dff8f" font-size="10" font-weight="800" text-anchor="middle">signs</text>
-
-  <text x="440" y="190" fill="#fff" font-size="14" font-weight="700" text-anchor="middle">Each member's certificate is a chain of signatures back to the owner.</text>
-  <text x="440" y="214" fill="#8b96a5" font-size="13" text-anchor="middle">The server checks the whole chain, so nobody gets in without an invite, and each invite works once.</text>
-  <text x="440" y="238" fill="#8b96a5" font-size="13" text-anchor="middle">The server stores none of this: members' apps hand it the certificates when they connect.</text>
-  <text x="440" y="268" fill="#ff5c57" font-size="13" font-weight="700" text-anchor="middle">Only the owner can remove people. Removing sam also removes leo, because sam invited leo.</text>
+  <text x="440" y="244" fill="#fff" font-size="14" font-weight="700" text-anchor="middle">Only the developer can create invite codes, and each code lets in exactly one person.</text>
+  <text x="440" y="268" fill="#9b9b9b" font-size="13" text-anchor="middle">Every member holds a certificate signed through an invite you made. The server checks it on every</text>
+  <text x="440" y="288" fill="#9b9b9b" font-size="13" text-anchor="middle">connection, so nobody gets in without one, even after a restart. It stores none of this itself.</text>
 </svg>

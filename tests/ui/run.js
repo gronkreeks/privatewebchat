@@ -112,7 +112,6 @@ async function invite(owner) {
 async function join(p, code, name, pin) {
   await p.goto(url);
   await p.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
-  await p.click('#goJoin');
   await p.fill('#joinCode', code); await p.fill('#joinName', name);
   await p.until(`$('joinFrom').textContent.includes('Invite from')`, 'invite check');
   await p.click('#joinNext');
@@ -176,12 +175,12 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.shot('invite.png');
   await maya.clickText('Close');
   await join(sam, code1, 'sam', '5678');
-  console.log('✓ sam joined with an invite');
+  assert(await sam.js(`return $('inviteBtn').classList.contains('hidden')`), 'only the developer can invite');
+  console.log('✓ sam joined with an invite (members can\'t invite)');
   const reuse = await newPage('reuse');
   await reuse.size(1100, 700);
   await reuse.goto(url);
   await reuse.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
-  await reuse.click('#goJoin');
   await reuse.fill('#joinCode', code1); await reuse.fill('#joinName', 'eve');
   await reuse.until(`$('joinFrom').textContent.includes('Invite from')`, 'invite check');
   await reuse.click('#joinNext');
@@ -280,6 +279,17 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await background(maya, false);
   console.log('✓ no notifications while blacked out');
 
+  // ── Direct messages disappear after 24 hours ──
+  await nav(maya, 'sam');
+  assert(await maya.js(`return $('roomSub').textContent.includes('24 hours')`), 'DM header says 24 hours');
+  assert(await maya.js(`return $('log').textContent.includes('Thanks for the invite')`), 'DM there before');
+  await maya.js(`window.__realNow = Date.now; Date.now = () => window.__realNow() + 25 * 3600000; window.dispatchEvent(new Event('focus'))`);
+  await maya.until(`!$('log').textContent.includes('Thanks for the invite')`, 'old DMs deleted');
+  await maya.js(`Date.now = window.__realNow`);
+  await nav(maya, 'Weekend plans');
+  assert((await lastMsg(maya)).includes('see you there'), 'group messages are kept');
+  console.log('✓ direct messages are deleted after 24 hours; group chats are kept');
+
   // ── Settings, profile, safety numbers ──
   await maya.click('#settingsBtn');
   await maya.until(`$('modalCard').textContent.includes('Black-out key')`, 'settings');
@@ -348,7 +358,6 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await dup.size(1100, 700);
   await dup.goto(url);
   await dup.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
-  await dup.click('#goJoin');
   await dup.fill('#joinCode', code3); await dup.fill('#joinName', 'SAM');
   await dup.until(`$('joinFrom').textContent.includes('Invite from')`, 'invite check');
   await dup.click('#joinNext');

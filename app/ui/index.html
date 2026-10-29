@@ -13,24 +13,15 @@
       <div class="card narrow">
         <div class="brand"><span class="logo"></span>privatewebchat</div>
         <p class="lead">Private, end-to-end encrypted chat. Invite only.</p>
-        <div class="choices">
-          <button class="choice" id="goJoin"><b>I have an invite</b><span>Paste the invite code someone sent you</span></button>
-          <button class="choice" id="goCreate"><b>Start a new network</b><span>You run the server and invite everyone else</span></button>
-        </div>
-      </div>
-    </section>
-
-    <section id="sJoin" class="screen hidden">
-      <div class="card narrow">
-        <h1>Join with an invite</h1>
         <label class="lbl" for="joinCode">Invite code</label>
-        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="PWC1.…"></textarea>
+        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="Paste the invite code you were given (PWC1.…)"></textarea>
         <p class="hint" id="joinFrom"></p>
         <label class="lbl" for="joinName">Username</label>
         <input id="joinName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. sam_k">
         <p class="hint small">Letters, numbers, _ and . only. <b>You can't change it later.</b></p>
         <div class="err" id="joinErr"></div>
-        <div class="row end"><button class="link" data-back>Back</button><button class="btn" id="joinNext">Continue</button></div>
+        <div class="row end"><button class="btn" id="joinNext">Continue</button></div>
+        <p class="dev"><button class="textlink" id="goCreate">Developer? Set up a server</button></p>
       </div>
     </section>
 
@@ -88,7 +79,7 @@
           <span class="dot" id="netDot" title="Offline"></span>
         </div>
         <div class="side-scroll">
-          <button class="item big" id="navFriends"><span class="ico">👥</span><span class="nm">Friends</span><span class="badge hidden" id="friendsBadge"></span></button>
+          <button class="item big" id="navFriends"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.4c1.9.8 3 2.8 3 5.6"/></svg></span><span class="nm">Friends</span><span class="badge hidden" id="friendsBadge"></span></button>
           <button class="item big" id="navGeneral"><span class="ico hash">#</span><span class="nm">General</span><span class="badge hidden" id="generalBadge"></span></button>
           <div class="side-h"><span>Messages</span><button class="icon" id="newGroup" title="New group chat">+</button></div>
           <div id="inbox"></div>

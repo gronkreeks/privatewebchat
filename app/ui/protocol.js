@@ -105,7 +105,8 @@
     if (typeof g !== 'object' || typeof g.exp !== 'number' || m.at > g.exp) return null;
     if (!(await verify(g.ik, ['pwc-join', mm], cert.s))) return null;
     const up = await verifyCert(g.from, owner, depth + 1);
-    if (!up || !(await verify(up.sig, ['pwc-invite', g.ik, g.exp], g.s))) return null;
+    // Only the owner (the developer running the server) can invite people
+    if (!up || up.by || !(await verify(up.sig, ['pwc-invite', g.ik, g.exp], g.s))) return null;
     if (up.id === id || up.chain.includes(id)) return null;
     return { id, name: m.name, at: m.at, sig: m.sig, ecdh: m.ecdh, ik: g.ik, by: up.id, chain: [...up.chain, up.id] };
   }

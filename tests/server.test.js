@@ -78,9 +78,18 @@ function client(keys, cert, dir = [], removals = null) {
   const o3 = await client(ok, oc);
   await new Promise(r => setTimeout(r, 300));
   assert(!o3.got.some(m => m.t === 'env'), 'acked envelope not resent');
+  // envelopes that expire (DMs ask for 24 hours) aren't delivered late
+  o3.ws.close(); await new Promise(r => setTimeout(r, 200));
+  const short = await box.seal({ k: 'msg', room: 'dm', mid: 'gone', text: 'expires' }, [{ id: oid, ecdh: ok.ecdhPub }]);
+  a.send({ t: 'send', ref: 'gone', ttl: 1000, ...short });
+  await a.next('sent');
+  await new Promise(r => setTimeout(r, 1300));
+  const o3b = await client(ok, oc);
+  await new Promise(r => setTimeout(r, 300));
+  assert(!o3b.got.some(m => m.t === 'env'), 'expired envelope not delivered');
   // removal disconnects alice
   const rem = await P.signRemovals(ok, 1, [aid]);
-  o3.send({ t: 'removals', removals: rem });
+  o3b.send({ t: 'removals', removals: rem });
   assert.strictEqual((await a.next('removed')).t, 'removed');
   // restart the server: it forgets everything, then learns it back from the apps
   srv.kill(); await new Promise(r => setTimeout(r, 300));

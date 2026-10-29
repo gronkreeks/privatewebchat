@@ -18,7 +18,8 @@ const OWNER_KEY = (process.env.OWNER_KEY || '').trim();
 const DATA_DIR = process.env.DATA_DIR || '';
 const MAX_CLIENTS = +process.env.MAX_CLIENTS || 200;
 const QUEUE_MAX = 2000;                    // envelopes waiting per member
-const QUEUE_TTL = 14 * 24 * 3600000;       // dropped after 14 days
+const QUEUE_TTL = 14 * 24 * 3600000;       // dropped after 14 days, or sooner if the sender asks (DMs: 24 hours)
+const live = (e, t) => t < (e.exp || e.at + QUEUE_TTL);
 const MAX_RECIPIENTS = 500, MAX_CT = 96000, MAX_DIR = 2000;
 const AUTH_TIMEOUT_MS = 20000;
 
@@ -125,7 +126,8 @@ async function handle(ws, m) {
       removals: removals.v ? removals : null, online: [...online.keys()],
     });
     broadcast({ t: 'presence', id: info.id, on: true }, info.id);
-    for (const env of queues.get(info.id) || []) send(ws, env);
+    const t0 = now();
+    for (const env of queues.get(info.id) || []) if (live(env, t0)) send(ws, env);
     return;
   }
   const me = ws.member;
@@ -136,7 +138,8 @@ async function handle(ws, m) {
       if (limited(ws.rate, t)) return send(ws, { t: 'error', ref: m.ref, msg: "You're sending messages too fast. Wait a few seconds." });
       if (!P.isB64(m.iv, P.IV, P.IV) || !P.isB64(m.ct, 24, MAX_CT) || !m.keys || typeof m.keys !== 'object') return send(ws, { t: 'error', ref: m.ref, msg: "That message couldn't be sent" });
       const to = Object.keys(m.keys).slice(0, MAX_RECIPIENTS).filter(id => id !== me.id && members.has(id) && P.isB64(m.keys[id], P.WRAPPED, P.WRAPPED));
-      for (const id of to) deliver(id, { t: 'env', eid: (++envSeq).toString(36) + '.' + crypto.randomBytes(3).toString('hex'), from: me.id, iv: m.iv, ct: m.ct, key: m.keys[id], at: t });
+      const ttl = Number.isFinite(m.ttl) ? Math.max(1000, Math.min(QUEUE_TTL, m.ttl)) : QUEUE_TTL;
+      for (const id of to) deliver(id, { t: 'env', eid: (++envSeq).toString(36) + '.' + crypto.randomBytes(3).toString('hex'), from: me.id, iv: m.iv, ct: m.ct, key: m.keys[id], at: t, exp: t + ttl });
       send(ws, { t: 'sent', ref: m.ref, at: t, n: to.length });
       if (to.length) save();
       break;
@@ -168,7 +171,7 @@ async function load() {
     if (state.removals) await applyRemovals(state.removals);
     for (const c of state.members || []) await admit(c);
     const t = now();
-    for (const [id, q] of state.queues || []) if (members.has(id)) queues.set(id, q.filter(e => t - e.at < QUEUE_TTL));
+    for (const [id, q] of state.queues || []) if (members.has(id)) queues.set(id, q.filter(e => live(e, t)));
     log(`loaded ${members.size} members and ${queues.size} queues from disk`);
   } catch (e) { if (e.code !== 'ENOENT') log('load failed', e.message); }
 }
@@ -214,9 +217,9 @@ setInterval(() => {
 setInterval(() => {
   const t = now();
   for (const [id, q] of queues) {
-    const left = q.filter(e => t - e.at < QUEUE_TTL);
+    const left = q.filter(e => live(e, t));
     if (left.length) queues.set(id, left); else queues.delete(id);
   }
-}, 3600000).unref();
+}, 10 * 60000).unref();
 
 load().then(() => server.listen(PORT, () => log(`privatewebchat relay on port ${PORT}${ownerOk ? '' : ' (not set up: OWNER_KEY is missing)'}`)));
