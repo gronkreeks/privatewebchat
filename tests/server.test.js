@@ -2,14 +2,18 @@
 // and restarts. Run: node tests/server.test.js   (Node 22+, for the built-in WebSocket client)
 const P = require('../app/ui/protocol.js');
 const { spawn } = require('child_process');
+const http = require('http');
 const path = require('path');
 const assert = require('assert');
 const PORT = 18000 + Math.floor(Math.random() * 1000);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 let srv;
-function startServer(owner) {
+// Stands in for GitHub's newest-release API; RELEASES_URL is empty (no checking) unless a test sets it
+const newest = { tag: 'v1.1.4' };
+const releases = http.createServer((req, rsp) => { rsp.writeHead(200, { 'Content-Type': 'application/json' }); rsp.end(JSON.stringify({ tag_name: newest.tag })); });
+function startServer(owner, releasesUrl = '') {
   return new Promise(res => {
-    srv = spawn('node', [path.join(__dirname, '../server/index.js')], { env: { ...process.env, PORT, OWNER_KEY: owner } });
+    srv = spawn('node', [path.join(__dirname, '../server/index.js')], { env: { ...process.env, PORT, OWNER_KEY: owner, RELEASES_URL: releasesUrl } });
     srv.stdout.on('data', d => { if (String(d).includes('privatewebchat relay on port')) res(); });
     srv.stderr.on('data', d => process.stderr.write('SERVER: ' + d));
   });
@@ -145,6 +149,22 @@ const last = c => c.got.pop();
   await client(bob, bc, { dir: [bc, cc], removals: rem });
   assert.strictEqual((await mc.next('denied')).why, 'name', 'name grabber dropped');
   assert.strictEqual(last(await client(carol, cc)).t, 'welcome', 'real holder gets her name back');
+
+  // Once a release that updates itself is out, apps too old to update are turned away and told how to get
+  // it; until then they're only told. Apps that say their version are let in either way.
+  await new Promise(r => releases.listen(0, '127.0.0.1', r));
+  const relUrl = `http://127.0.0.1:${releases.address().port}/latest`;
+  srv.kill(); await sleep(300);
+  await startServer(ok.sigPub, relUrl); await sleep(400);
+  assert.strictEqual(last(await client(bob, bc, { v: null, dir: [bc, cc], removals: rem })).t, 'welcome', 'old app let in while 1.1.4 is the newest');
+  newest.tag = 'v1.1.5';
+  srv.kill(); await sleep(300);
+  await startServer(ok.sigPub, relUrl); await sleep(400);
+  const denied = last(await client(bob, bc, { v: null, dir: [bc, cc], removals: rem }));
+  assert.strictEqual(denied.why, 'outdated', 'old app turned away once 1.1.5 is out');
+  assert(denied.msg.includes('1.1.5') && denied.msg.includes("You'll still be bob") && denied.msg.includes('releases/latest'), 'and told where to get it, as who');
+  assert.strictEqual(last(await client(bob, bc)).t, 'welcome', 'a new app is let in');
+  releases.close();
 
   // A server without OWNER_KEY
   srv.kill(); await sleep(300);

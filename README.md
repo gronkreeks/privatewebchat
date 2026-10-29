@@ -62,7 +62,7 @@ The app is built from the code in this repository: `app/build-windows.sh` and `a
 
 Every time privatewebchat opens, it checks this repository's [Releases](../../releases/latest) for a newer version. If there is one, it shows the patch notes, downloads the file for your computer, checks it against the release's `SHA256SUMS.txt`, installs it and opens again. If you're offline or anything goes wrong, it just opens as usual and tries again next time.
 
-Versions 1.1.4 and older can't update themselves: download the new version once by hand, and it takes care of itself after that.
+Versions 1.1.4 and older can't update themselves, and no longer work once 1.1.5 is out: they show a banner saying where to download the new version. Install it once by hand (you keep your username, PIN and friends, so no invite code is needed) and it takes care of itself after that.
 
 **Publishing an update** (developer): bump the version in `app/ui/config.js`, `app/mac/Info.plist`, `app/win/app.rc` and `app/build-mac.sh` (`node tests/version.test.js` checks they match), write the patch notes in `docs/releases/vX.Y.Z.md`, then push a tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
 

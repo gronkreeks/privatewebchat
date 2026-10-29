@@ -23,10 +23,26 @@ const QUEUE_TTL = 14 * 24 * 3600000;       // dropped after 14 days, or sooner i
 const live = (e, t) => t < (e.exp || e.at + QUEUE_TTL);
 const MAX_RECIPIENTS = 500, MAX_CT = 96000, MAX_DIR = 2000;
 const AUTH_TIMEOUT_MS = 20000;
-// Apps from before 1.1.5 can't update themselves (and don't say their version): they're told to,
-// in their message box, when they connect and at most every 10 minutes when they send
+// Apps from before 1.1.5 can't update themselves and don't say their version. Once a release that
+// updates itself is out (the server asks GitHub every half hour), they're turned away with a message
+// saying where to get it; it shows as a banner across the top of the old app. Until then they're only
+// told about it, in their message box, when they connect and at most every 10 minutes when they send.
+const RELEASES_URL = process.env.RELEASES_URL ?? 'https://api.github.com/repos/gronkreeks/privatewebchat/releases/latest';
+const SELF_UPDATING = [1, 1, 5];
+let latest = null;   // the newest release's version, once it updates itself
 const OUTDATED = 'A new version of privatewebchat is out. Download it from github.com/gronkreeks/privatewebchat/releases/latest. After that, privatewebchat updates itself whenever it opens.';
 const OUTDATED_EVERY = 10 * 60000;
+const tooOld = name => `privatewebchat ${latest} is out and this version no longer works. Download it from github.com/gronkreeks/privatewebchat/releases/latest and open it. You'll still be ${name}, with the same PIN and friends, so you don't need an invite code. After this it updates itself.`;
+async function checkLatest() {
+  if (!RELEASES_URL) return;
+  try {
+    const r = await fetch(RELEASES_URL, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'privatewebchat-relay' }, signal: AbortSignal.timeout(10000) });
+    const m = r.ok && /^v(\d+)\.(\d+)\.(\d+)$/.exec((await r.json()).tag_name);
+    if (!m) return;
+    const v = m.slice(1).map(Number), d = v.map((x, i) => x - SELF_UPDATING[i]).find(x => x);
+    if ((d || 0) >= 0) latest = v.join('.');
+  } catch { }
+}
 
 const ownerOk = P.isB64(OWNER_KEY, P.PUB, P.PUB);
 const members = new Map();      // id -> { cert, info, vouched }
@@ -143,6 +159,7 @@ async function handle(ws, m) {
     const info = await admit(m.cert);
     if (info.why === 'name') return deny(ws, 'That username is already taken.', 'name');
     if (info.why) return deny(ws, "This device isn't a member of this network. It may have been removed, or its invite was already used.", 'member');
+    if (typeof m.v !== 'string' && latest) return deny(ws, tooOld(info.name), 'outdated');
     if (ws.readyState !== 1) return;
     clearTimeout(ws.authT);
     const old = online.get(info.id);
@@ -179,7 +196,7 @@ async function handle(ws, m) {
 }
 function outdated(ws) {
   const t = now();
-  if (ws.version || t - (ws.toldOutdated || 0) < OUTDATED_EVERY) return;
+  if (ws.version || latest || t - (ws.toldOutdated || 0) < OUTDATED_EVERY) return;
   ws.toldOutdated = t;
   send(ws, { t: 'error', msg: OUTDATED });
 }
@@ -255,4 +272,6 @@ setInterval(() => {
   }
 }, 10 * 60000).unref();
 
+checkLatest();
+setInterval(checkLatest, 30 * 60000).unref();
 load().then(() => server.listen(PORT, () => log(`privatewebchat relay on port ${PORT}${ownerOk ? '' : ' (not set up: OWNER_KEY is missing)'}`)));

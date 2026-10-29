@@ -46,7 +46,7 @@ function serveUi() {
 let relay = null;
 function startRelay(owner) {
   return new Promise(res => {
-    relay = spawn('node', [path.join(ROOT, 'server/index.js')], { env: { ...process.env, PORT: RELAY_PORT, OWNER_KEY: owner } });
+    relay = spawn('node', [path.join(ROOT, 'server/index.js')], { env: { ...process.env, PORT: RELAY_PORT, OWNER_KEY: owner, RELEASES_URL: '' } });
     procs.push(relay);
     relay.stdout.on('data', d => { if (String(d).includes('privatewebchat relay on port')) res(); });
   });
