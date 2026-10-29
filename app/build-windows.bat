@@ -12,11 +12,12 @@ if not exist %WV2%\WebView2.h (
 )
 set CFLAGS=/nologo /O2 /MT /utf-8 /D_CRT_SECURE_NO_WARNINGS /DWEBVIEW_STATIC /Ivendor\webview /Ibuild /Isrc
 cl /nologo /O2 /D_CRT_SECURE_NO_WARNINGS src\embed.c /Fe:build\embed.exe /Fo:build\embed.obj || goto :fail
-build\embed.exe build\ui.h ui index.html style.css protocol.js vault.js app.js || goto :fail
+build\embed.exe build\ui.h ui index.html style.css config.js protocol.js vault.js app.js || goto :fail
 cl %CFLAGS% /EHsc /std:c++17 /w /I%WV2% /c src\webview.cc /Fo:build\webview.obj || goto :fail
 cl %CFLAGS% /c src\main.c /Fo:build\main.obj || goto :fail
 cl %CFLAGS% /c src\platform_win.c /Fo:build\platform_win.obj || goto :fail
-link /nologo /OUT:dist\privatewebchat.exe /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup build\webview.obj build\main.obj build\platform_win.obj ^
+rc /nologo /fo build\app.res win\app.rc || goto :fail
+link /nologo /OUT:dist\privatewebchat.exe /SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup build\webview.obj build\main.obj build\platform_win.obj build\app.res ^
   ws2_32.lib bcrypt.lib crypt32.lib advapi32.lib ole32.lib shell32.lib shlwapi.lib user32.lib version.lib || goto :fail
 echo Built dist\privatewebchat.exe
 exit /b 0

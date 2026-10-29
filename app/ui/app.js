@@ -14,9 +14,9 @@
     info: {},           // member id -> verified certificate info
     removed: new Set(),
     online: new Set(),
-    box: null, isOwner: false, unlocked: false, black: false, capturing: false,
+    box: null, unlocked: false, black: false, capturing: false,
     view: 'friends',    // 'friends' or a chat id
-    ftab: 'online', status: 'offline', setupShown: false, live: false,
+    ftab: 'online', status: 'offline', live: false,
   };
 
   // ──────────── Little helpers ────────────
@@ -33,7 +33,7 @@
     for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : String(k));
     return e;
   }
-  const screens = ['sWelcome', 'sCreate', 'sSetPin', 'sUnlock', 'sGone', 'sMain'];
+  const screens = ['sWelcome', 'sSetPin', 'sUnlock', 'sGone', 'sMain'];
   function show(id) { for (const s of screens) $(s).classList.toggle('hidden', s !== id); const f = $(id).querySelector('input, textarea'); if (f) setTimeout(() => f.focus(), 30); }
   const err = (id, t, ok) => { $(id).textContent = t || ''; $(id).classList.toggle('ok', !!ok); };
   const hue = s => { let x = 0; for (const c of s) x = (x * 31 + c.charCodeAt(0)) >>> 0; return x % 360; };
@@ -156,10 +156,9 @@
   $('unlockPin').addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });
 
   // ── First run ──
+  // Every copy connects to the developer's server (config.js). Paste an invite code, then the
+  // username box appears.
   let pending = null;   // what setup will create once a PIN is chosen
-  // Friends get an invite code from the developer. Starting a network is only for the developer.
-  $('goCreate').onclick = () => { err('createErr', ''); show('sCreate'); };
-  for (const b of document.querySelectorAll('[data-back]')) b.onclick = () => show('sWelcome');
   const usernameProblem = n => n.length < 2 ? 'Usernames need at least 2 characters' : !P.USERNAME_RE.test(n) ? 'Usernames can only use letters, numbers, _ and .' : null;
 
   const INVITE_PREFIX = 'PWC1.';
@@ -169,63 +168,48 @@
     try {
       const json = atob(s.slice(INVITE_PREFIX.length).replace(/-/g, '+').replace(/_/g, '/'));
       const inv = JSON.parse(decodeURIComponent(escape(json)));
-      if (!inv || typeof inv.u !== 'string' || !inv.g || typeof inv.k !== 'string') return null;
+      if (!inv || !inv.g || typeof inv.k !== 'string') return null;
       return inv;
     } catch (e) { return null; }
   }
-  const encodeInvite = inv => INVITE_PREFIX + btoa(unescape(encodeURIComponent(JSON.stringify(inv)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  function inviteOwner(g) { let c = g.from; for (let i = 0; c && c.by && i < 40; i++) c = c.by.from; return c && c.m && c.m.sig; }
-  // Checks the invite chain before using it
+  // An invite is valid when the owner signed it. Returns the owner's key, or null.
   async function checkInvite(inv) {
-    const owner = inviteOwner(inv.g);
-    const server = normServer(inv.u);
-    if (!owner || !server) return null;
-    const from = await P.verifyCert(inv.g.from, owner);
+    const c = inv.g.from;
+    const owner = c && c.m && c.m.sig;
+    if (!owner || c.by) return null;
+    const from = await P.verifyCert(c, owner);
     if (!from || !(await P.verify(from.sig, ['pwc-invite', inv.g.ik, inv.g.exp], inv.g.s))) return null;
-    return { owner, server, from };
+    return owner;
   }
+  let checked = null;   // { inv, owner } once the pasted code is valid
   $('joinCode').addEventListener('input', async () => {
-    const inv = parseInvite($('joinCode').value);
-    const c = inv && await checkInvite(inv);
-    $('joinFrom').textContent = c ? `Invite from ${c.from.name} · ${new URL(c.server).host}` + (inv.g.exp < Date.now() ? ' · expired' : '') : '';
+    const text = $('joinCode').value;
+    const inv = parseInvite(text);
+    const owner = inv && await checkInvite(inv);
+    if (text !== $('joinCode').value) return;   // changed while checking
+    checked = owner ? { inv, owner } : null;
+    const expired = checked && inv.g.exp < Date.now();
+    err('joinErr', !text.trim() ? '' : !checked ? "That invite code isn't valid" : expired ? 'That invite code has expired. Ask for a new one.' : '');
+    const show2 = !!checked && !expired;
+    const was = !$('joinMore').classList.contains('hidden');
+    $('joinMore').classList.toggle('hidden', !show2);
+    $('joinRow').classList.toggle('hidden', !show2);
+    if (show2 && !was) setTimeout(() => $('joinName').focus(), 0);
   });
-  $('joinNext').onclick = async () => {
-    const inv = parseInvite($('joinCode').value);
+  $('joinName').addEventListener('keydown', e => { if (e.key === 'Enter') $('joinNext').click(); });
+  $('joinName').addEventListener('input', () => err('joinErr', ''));
+  $('joinNext').onclick = () => {
+    if (!checked) return;
     const name = $('joinName').value.trim();
-    if (!inv) return err('joinErr', "That doesn't look like a privatewebchat invite code");
-    const c = await checkInvite(inv);
-    if (!c) return err('joinErr', "That invite isn't valid");
-    if (inv.g.exp < Date.now()) return err('joinErr', 'That invite has expired. Ask for a new one.');
     const bad = usernameProblem(name);
     if (bad) return err('joinErr', bad);
-    pending = { kind: 'join', inv, name, ...c };
-    pinScreen();
-  };
-  function normServer(s) {
-    s = String(s || '').trim();
-    if (!s) return null;
-    if (/^https:\/\//i.test(s)) s = 'wss://' + s.slice(8);
-    else if (!/^wss?:\/\//i.test(s)) s = 'wss://' + s;
-    try {
-      const u = new URL(s);
-      // Only encrypted connections, except a test server on this computer
-      if (u.protocol === 'wss:' || (u.protocol === 'ws:' && /^(localhost|127\.0\.0\.1)$/.test(u.hostname))) return u.href.replace(/\/$/, '');
-    } catch (e) { }
-    return null;
-  }
-  $('createNext').onclick = () => {
-    const server = normServer($('createServer').value);
-    const name = $('createName').value.trim();
-    if (!server) return err('createErr', 'Enter the address of your privatewebchat server, like your-privatewebchat.onrender.com');
-    const bad = usernameProblem(name);
-    if (bad) return err('createErr', bad);
-    pending = { kind: 'create', server, name };
+    pending = { inv: checked.inv, owner: checked.owner, name };
     pinScreen();
   };
 
   digitsOnly($('newPin')); digitsOnly($('newPin2'));
   function pinScreen() { $('newPin').value = ''; $('newPin2').value = ''; err('setPinErr', ''); show('sSetPin'); }
-  $('setPinBack').onclick = () => show(pending && pending.kind === 'create' ? 'sCreate' : 'sWelcome');
+  $('setPinBack').onclick = () => show('sWelcome');
   $('newPin2').addEventListener('keydown', e => { if (e.key === 'Enter') $('setPinGo').click(); });
   $('setPinGo').onclick = async () => {
     const a = $('newPin').value, b = $('newPin2').value;
@@ -235,19 +219,12 @@
     try {
       const keys = await P.generateKeys();
       const me = await P.idOf(keys.sigPub);
-      let cert, owner, server, dir = {}, pendingInvite;
-      if (pending.kind === 'create') {
-        cert = await P.ownerCert(keys, pending.name); owner = keys.sigPub; server = pending.server;
-      } else {
-        cert = await P.acceptInvite(pending.inv, keys, pending.name); owner = pending.owner; server = pending.server;
-        // Kept until the server accepts us, in case the username is taken and we need to pick another
-        pendingInvite = { g: pending.inv.g, k: pending.inv.k };
-        for (let c = pending.inv.g.from; c; c = c.by && c.by.from) { const i = await P.verifyCert(c, owner); if (i) dir[i.id] = c; }
-      }
-      dir[me] = cert;
+      const cert = await P.acceptInvite(pending.inv, keys, pending.name);
+      // The invite is kept until the server accepts us, in case the username is taken and we need to pick another
       await Vault.create(a, {
-        v: 1, server, owner, me, keys, cert, dir, names: {}, removals: null, pendingInvite,
-        rooms: { general: { id: 'general', kind: 'general', name: 'General' } }, msgs: {}, unread: {}, invites: [],
+        v: 1, server: PwcConfig.SERVER, owner: pending.owner, me, keys, cert, dir: { [me]: cert }, names: {}, removals: null,
+        pendingInvite: { g: pending.inv.g, k: pending.inv.k },
+        rooms: { general: { id: 'general', kind: 'general', name: 'General' } }, msgs: {}, unread: {},
         friends: {}, blocked: {},
         settings: { panicCode: 'Escape', panicGlobal: false, notify: true, previews: true, wipeSet: false },
       });
@@ -264,7 +241,7 @@
     D.friends = D.friends || {}; D.blocked = D.blocked || {};
     if (D.settings.notify === undefined) { D.settings.notify = true; D.settings.previews = true; }
     S.unlocked = true;
-    S.isOwner = D.keys.sigPub === D.owner;
+    if (D.server !== PwcConfig.SERVER) { D.server = PwcConfig.SERVER; Vault.save(); }
     S.box = P.createBox(D.me, D.keys.ecdhPriv);
     S.removed = new Set(D.removals ? D.removals.ids : []);
     for (const c of Object.values(D.dir)) await learn(c, true);
@@ -279,7 +256,7 @@
   // Adds a member we've been told about, after checking their certificate ourselves
   async function learn(cert, quiet) {
     const info = await P.verifyCert(cert, D.owner);
-    if (!info || P.isRemoved(info, S.removed)) return null;
+    if (!info || !info.by || P.isRemoved(info, S.removed)) return null;
     const isNew = !S.info[info.id];
     S.info[info.id] = info;
     if (!D.dir[info.id] || D.names[info.id] !== info.name) { D.dir[info.id] = cert; D.names[info.id] = info.name; Vault.save(); }
@@ -339,10 +316,7 @@
     switch (m.t) {
       case 'hello':
         if (m.net !== D.owner) {
-          if (S.isOwner) {
-            setStatus('setup', 'Finish setting up: the server needs your OWNER_KEY.', false, h('button', { class: 'link', onclick: ownerSetup }, 'Show me how'));
-            if (!S.setupShown) { S.setupShown = true; ownerSetup(); }
-          } else setStatus('setup', m.net ? 'This server belongs to a different privatewebchat network.' : "The server isn't set up yet. Ask the person who invited you.", true);
+          setStatus('setup', m.net ? "Your invite doesn't match this server. Ask the developer for a new one." : "The server isn't ready yet. Hang on, it keeps trying.", true);
           ws.close();
           return;
         }
@@ -351,7 +325,7 @@
       case 'welcome':
         retry = 1500;
         if (D.pendingInvite) { delete D.pendingInvite; Vault.save(); }
-        if ($('modalCard').dataset.kind === 'setup' || $('modalCard').dataset.kind === 'rename') closeModal();
+        if ($('modalCard').dataset.kind === 'rename') closeModal();
         if (m.removals) await applyRemovals(m.removals);
         for (const c of m.dir || []) await learn(c, true);
         S.online = new Set(m.online || []);
@@ -593,7 +567,6 @@
   function render() {
     if (!S.unlocked) return;
     $('meBox').replaceChildren(avatar(D.me, 'sm', true), h('span', { class: 'nm', text: nameOf(D.me) }));
-    $('inviteBtn').classList.toggle('hidden', !S.isOwner);
     $('panicKbd').textContent = keyLabel(D.settings.panicCode);
     renderSidebar();
     const friends = S.view === 'friends';
@@ -709,8 +682,8 @@
       h('div', { class: 'addbox' }, input, send),
       h('div', { class: 'err fnote' }),
       h('div', { class: 'fhead gap', text: `Everyone in this network — ${others.length}` }),
-      ...(others.length ? others.map(id => personRow(id, status(id) + (S.info[id] && !S.info[id].by ? ' · Owner' : ''), [stateFor(id)]))
-        : [h('div', { class: 'empty' }, h('b', {}, "It's just you so far."), S.isOwner ? 'Use Invite someone to bring your friends in.' : 'More people will show up here as the developer invites them.')]));
+      ...(others.length ? others.map(id => personRow(id, status(id), [stateFor(id)]))
+        : [h('div', { class: 'empty' }, h('b', {}, "It's just you so far."), 'More people will show up here as the developer invites them.')]));
     if (refocus) setTimeout(() => input.focus(), 0);
   }
 
@@ -857,45 +830,13 @@
       more.push(h('button', { class: 'link', onclick: () => safety(id) }, 'Verify safety number'));
       if (st === 'friend') more.push(h('button', { class: 'link', onclick: () => ask(`Remove ${nameOf(id)} as a friend?`, "You won't be able to message each other until one of you sends a new friend request.", 'Remove friend', () => friendAction('remove', id), true) }, 'Remove friend'));
       if (!D.blocked[id]) more.push(h('button', { class: 'link danger', onclick: () => ask(`Block ${nameOf(id)}?`, "You won't see their messages anywhere, and they can't send you friend requests.", 'Block', () => block(id), true) }, 'Block'));
-      if (S.isOwner) more.push(h('button', { class: 'link danger', onclick: () => removeMember(id) }, 'Remove from network'));
     }
     modal('', h('div', { class: 'profile' }, avatar(id, 'lg', true), h('h2', { text: nameOf(id) + (me ? ' (you)' : '') }),
-      h('p', { class: 'hint', text: !i ? 'No longer in this network' : (!i.by ? 'Network owner' : `Invited by ${nameOf(i.by)}`) + ' · ' + (isOnline(id) ? 'Online' : 'Offline') + (st === 'friend' ? ' · Friends' : '') }),
+      h('p', { class: 'hint', text: !i ? 'No longer in this network' : (isOnline(id) ? 'Online' : 'Offline') + (st === 'friend' ? ' · Friends' : '') }),
       btns.length ? h('div', { class: 'row' }, btns) : null, more.length ? h('div', { class: 'row' }, more) : null, note),
       closeBtn());
   }
   $('meBox').onclick = () => profile(D.me);
-  $('inviteBtn').onclick = () => {
-    const exp = h('select', { class: 'in' }, h('option', { value: 1 }, '1 hour'), h('option', { value: 24, selected: true }, '24 hours'), h('option', { value: 168 }, '7 days'));
-    const out = h('div');
-    const make = h('button', {
-      class: 'btn', onclick: async () => {
-        make.disabled = true;
-        const inv = await P.makeInvite(D.cert, D.keys, +exp.value);
-        D.invites.unshift({ ik: inv.g.ik, exp: inv.g.exp, at: Date.now() });
-        D.invites = D.invites.slice(0, 50);
-        Vault.save();
-        const code = encodeInvite({ u: D.server, g: inv.g, k: inv.k });
-        const ta = h('textarea', { class: 'in code', rows: 5, readonly: true }, code);
-        const note = h('div', { class: 'err ok' });
-        out.replaceChildren(h('label', { class: 'lbl', text: 'Invite code' }), ta,
-          h('div', { class: 'row' }, h('button', { class: 'btn gold', onclick: () => { copy(code); note.textContent = 'Copied'; } }, 'Copy'), note));
-        ta.addEventListener('focus', () => ta.select());
-        make.disabled = false;
-      },
-    }, 'Create invite');
-    modal('Invite someone',
-      h('p', { class: 'hint' }, 'An invite lets ', h('b', {}, 'one person'), ' join your server. Anyone who gets the code can use it, so send it to them privately. They download privatewebchat from GitHub, open it and paste the code.'),
-      h('label', { class: 'lbl', text: 'Expires after' }), exp, h('div', { class: 'row' }, make), out,
-      inviteHistory(), closeBtn());
-  };
-  function inviteHistory() {
-    if (!D.invites.length) return null;
-    const usedBy = {};
-    for (const i of Object.values(S.info)) if (i.ik) usedBy[i.ik] = i.name;
-    return h('div', {}, h('h3', { text: 'Your invites' }), h('div', { class: 'list' }, D.invites.slice(0, 10).map(x => h('div', { class: 'li' },
-      h('span', { class: 'grow' }, `Made ${fmtTime(x.at)}`), h('small', { text: usedBy[x.ik] ? `Joined as ${usedBy[x.ik]}` : x.exp < Date.now() ? 'Expired' : 'Not used yet' })))));
-  }
   async function safety(id) {
     const i = S.info[id];
     if (!i) return;
@@ -906,25 +847,6 @@
       h('div', { class: 'box mono', text: theirs }),
       h('label', { class: 'lbl', text: 'Yours' }), h('div', { class: 'box mono', text: mine }), closeBtn());
   }
-  function removeMember(id) {
-    ask(`Remove ${nameOf(id)} from the network?`, "They'll be disconnected and can't come back without a new invite.", 'Remove', async () => {
-      const prev = D.removals || { v: 0, ids: [] };
-      const r = await P.signRemovals(D.keys, prev.v + 1, [...new Set([...prev.ids, id])]);
-      await applyRemovals(r);
-      wsSend({ t: 'removals', removals: r });
-    }, true);
-  }
-  function ownerSetup() {
-    const note = h('div', { class: 'err ok' });
-    modal('Finish setting up your server',
-      h('p', { class: 'hint' }, 'Your server needs to know who owns this network. In the ', h('b', {}, 'Render dashboard'), ', open your privatewebchat service, go to ', h('b', {}, 'Environment'), ', and add a variable named ', h('b', {}, 'OWNER_KEY'), ' with this value:'),
-      h('div', { class: 'box mono', text: D.owner }),
-      h('div', { class: 'row' }, h('button', { class: 'btn gold', onclick: () => { copy(D.owner); note.textContent = 'Copied'; } }, 'Copy'), note),
-      h('p', { class: 'hint', style: 'margin-top:0.8rem', text: "Save it and Render restarts the server. privatewebchat keeps trying and continues as soon as the server is ready. This key isn't secret: it only lets the server check signatures." }),
-      closeBtn());
-    $('modalCard').dataset.kind = 'setup';
-  }
-
   // ──────────── Settings ────────────
   $('settingsBtn').onclick = settings;
   async function settings() {
@@ -1022,7 +944,6 @@
       h('p', { class: 'hint' }, 'Username: ', h('b', { text: nameOf(D.me) }), " (usernames can't be changed)"),
       h('p', { class: 'hint' }, 'Server: ', h('b', { text: D.server.replace(/^wss:\/\//, '') })),
       h('label', { class: 'lbl', text: 'Your safety number' }), h('div', { class: 'box mono', text: mine }),
-      S.isOwner ? h('div', { class: 'row' }, h('button', { class: 'link', onclick: ownerSetup }, 'Show OWNER_KEY')) : null,
 
       h('h3', { text: 'Erase' }),
       h('div', { class: 'row', style: 'margin-top:0' }, h('button', { class: 'link danger', onclick: () => ask('Erase everything now?', 'This deletes your identity, every message and all settings from this computer. It cannot be undone.', 'Erase', wipe, true) }, 'Erase everything on this device')),

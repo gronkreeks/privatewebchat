@@ -12,30 +12,14 @@
     <section id="sWelcome" class="screen hidden">
       <div class="card narrow">
         <div class="brand"><span class="logo"></span>privatewebchat</div>
-        <p class="lead">Private, end-to-end encrypted chat. Invite only.</p>
         <label class="lbl" for="joinCode">Invite code</label>
-        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="Paste the invite code you were given (PWC1.…)"></textarea>
-        <p class="hint" id="joinFrom"></p>
-        <label class="lbl" for="joinName">Username</label>
-        <input id="joinName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. sam_k">
-        <p class="hint small">Letters, numbers, _ and . only. <b>You can't change it later.</b></p>
+        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="Paste your invite code"></textarea>
+        <div id="joinMore" class="hidden">
+          <label class="lbl" for="joinName">Username</label>
+          <input id="joinName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="Pick a username">
+        </div>
         <div class="err" id="joinErr"></div>
-        <div class="row end"><button class="btn" id="joinNext">Continue</button></div>
-        <p class="dev"><button class="textlink" id="goCreate">Developer? Set up a server</button></p>
-      </div>
-    </section>
-
-    <section id="sCreate" class="screen hidden">
-      <div class="card narrow">
-        <h1>Start a new network</h1>
-        <p class="hint">Deploy the privatewebchat server on Render first (see the README), then enter its address. Render serves it over port 443.</p>
-        <label class="lbl" for="createServer">Server address</label>
-        <input id="createServer" class="in" autocomplete="off" spellcheck="false" placeholder="your-privatewebchat.onrender.com">
-        <label class="lbl" for="createName">Username</label>
-        <input id="createName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. maya">
-        <p class="hint small">Letters, numbers, _ and . only. <b>You can't change it later.</b></p>
-        <div class="err" id="createErr"></div>
-        <div class="row end"><button class="link" data-back>Back</button><button class="btn" id="createNext">Continue</button></div>
+        <div class="row end hidden" id="joinRow"><button class="btn" id="joinNext">Continue</button></div>
       </div>
     </section>
 
@@ -85,7 +69,6 @@
           <div id="inbox"></div>
         </div>
         <div class="side-bottom">
-          <button class="btn wide" id="inviteBtn">Invite someone</button>
           <div class="me-row">
             <span class="mebox" id="meBox"></span>
             <button class="icon" id="settingsBtn" title="Settings">⚙</button>
@@ -145,6 +128,7 @@
     <div id="blackDots"></div>
   </div>
 
+  <script src="config.js"></script>
   <script src="protocol.js"></script>
   <script src="vault.js"></script>
   <script src="app.js"></script>

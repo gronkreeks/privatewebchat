@@ -117,9 +117,17 @@ static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
   }
   return CallWindowProcW(orig_proc, h, m, wp, lp);
 }
+// The app icon from win/app.rc, at a given size (falls back to the standard one)
+static HICON app_icon(int metric) {
+  int s = GetSystemMetrics(metric);
+  HICON i = (HICON)LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1), IMAGE_ICON, s, s, 0);
+  return i ? i : LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
+}
 void plat_init(void *window) {
   hw = (HWND)window;
   orig_proc = (WNDPROC)SetWindowLongPtrW(hw, GWLP_WNDPROC, (LONG_PTR)proc);
+  SendMessageW(hw, WM_SETICON, ICON_BIG, (LPARAM)app_icon(SM_CXICON));
+  SendMessageW(hw, WM_SETICON, ICON_SMALL, (LPARAM)app_icon(SM_CXSMICON));
 }
 void plat_attention(void) {
   FLASHWINFO fi = { sizeof fi, hw, FLASHW_TRAY | FLASHW_TIMERNOFG, 0, 0 };
@@ -155,7 +163,7 @@ void plat_notify(const char *title, const char *body) {
     nid.uID = 1;
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_TRAY;
-    nid.hIcon = LoadIconW(NULL, (LPCWSTR)IDI_APPLICATION);
+    nid.hIcon = app_icon(SM_CXSMICON);
     wcscpy(nid.szTip, L"privatewebchat");
     tray_on = Shell_NotifyIconW(NIM_ADD, &nid) != 0;
     if (!tray_on) return;

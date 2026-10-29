@@ -51,7 +51,8 @@ async function checkCert(cert) {
 // Returns the member's info, or { why } when they're refused.
 async function admit(cert) {
   const info = await checkCert(cert);
-  if (!info || P.isRemoved(info, removed)) return { why: 'member' };
+  // The owner key only signs invites and removals (tools/owner.js); it never joins as a member
+  if (!info || !info.by || P.isRemoved(info, removed)) return { why: 'member' };
   const known = members.get(info.id);
   if (known) return known.info;
   const lower = info.name.toLowerCase();
@@ -108,6 +109,12 @@ function limited(st, t) {
 
 // ──────────── Connections ────────────
 async function handle(ws, m) {
+  // Owner requests (tools/owner.js) are signed with the owner key, so they need no login
+  if (m.t === 'removals') return applyRemovals(m.removals);
+  if (m.t === 'owner') {
+    if (!ownerOk || !(await P.verify(OWNER_KEY, ['pwc-owner', ws.nonce], m.sig))) return send(ws, { t: 'denied', msg: 'Not the owner', why: 'owner' });
+    return send(ws, { t: 'owner_dir', dir: [...members.values()].map(x => x.cert), removals: removals.v ? removals : null, online: [...online.keys()] });
+  }
   if (m.t === 'auth') {
     if (ws.member) return;
     if (!ownerOk) return deny(ws, 'This server has not been set up yet: it needs its OWNER_KEY.', 'setup');
@@ -145,7 +152,6 @@ async function handle(ws, m) {
       break;
     }
     case 'ack': ack(me.id, m.eids); break;
-    case 'removals': await applyRemovals(m.removals); break;
   }
 }
 function deny(ws, msg, why) { send(ws, { t: 'denied', msg, why }); ws.close(4000, why); }

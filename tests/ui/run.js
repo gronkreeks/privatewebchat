@@ -8,6 +8,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn } = require('child_process');
 const assert = require('assert');
+const P = require('../../app/ui/protocol.js');
 
 const ROOT = path.resolve(__dirname, '../..');
 const UI = path.join(ROOT, 'app/ui');
@@ -22,6 +23,7 @@ function serveUi() {
   const types = { '.html': 'text/html', '.css': 'text/css', '.js': 'text/javascript' };
   return new Promise(res => http.createServer((req, rsp) => {
     const name = path.basename(req.url.split('?')[0]) || 'index.html';
+    if (name === 'config.js') { rsp.writeHead(200, { 'Content-Type': 'text/javascript' }); return rsp.end(`const PwcConfig = { SERVER: 'ws://127.0.0.1:${RELAY_PORT}' };`); }
     const file = name === 'mock.js' ? path.join(__dirname, 'mock.js') : path.join(UI, name);
     if (!fs.existsSync(file)) { rsp.writeHead(404); return rsp.end(); }
     let body = fs.readFileSync(file);
@@ -102,18 +104,32 @@ async function setPin(p, pin) {
   await p.click('#setPinGo');
   await p.until(`!$('sMain').classList.contains('hidden')`, 'main screen');
 }
-async function invite(owner) {
-  await owner.click('#inviteBtn');
-  await owner.clickText('Create invite');
-  await owner.until(`document.querySelector('#modalCard textarea')`, 'invite code');
-  const code = await owner.js(`return document.querySelector('#modalCard textarea').value`);
-  return code;
+// The owner's side, as tools/owner.js does it
+const owner = {};
+async function makeOwner() {
+  owner.keys = await P.generateKeys();
+  owner.cert = await P.ownerCert(owner.keys, 'developer');
 }
-async function join(p, code, name, pin) {
+async function inviteCode() {
+  const inv = await P.makeInvite(owner.cert, owner.keys, 24 * 90);
+  return 'PWC1.' + Buffer.from(JSON.stringify({ g: inv.g, k: inv.k })).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+async function ownerRemove(info) {
+  const id = await P.idOf(info.sig);
+  const ws = new WebSocket(`ws://127.0.0.1:${RELAY_PORT}`);
+  await new Promise(r => { ws.onopen = r; });
+  ws.send(JSON.stringify({ t: 'removals', removals: await P.signRemovals(owner.keys, 1, [id]) }));
+  await sleep(300); ws.close();
+}
+async function enterCode(p, code) {
   await p.goto(url);
   await p.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
-  await p.fill('#joinCode', code); await p.fill('#joinName', name);
-  await p.until(`$('joinFrom').textContent.includes('Invite from')`, 'invite check');
+  await p.fill('#joinCode', code);
+  await p.until(`!$('joinMore').classList.contains('hidden')`, 'username box after a valid code');
+}
+async function join(p, code, name, pin) {
+  await enterCode(p, code);
+  await p.fill('#joinName', name);
   await p.click('#joinNext');
   await setPin(p, pin);
   await online(p);
@@ -137,7 +153,8 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
 (async () => {
   fs.mkdirSync(SHOTS, { recursive: true });
   await serveUi();
-  await startRelay('');
+  await makeOwner();
+  await startRelay(owner.keys.sigPub);
   const chrome = spawn(CHROME, ['--headless=new', `--remote-debugging-port=${CDP_PORT}`, `--user-data-dir=${fs.mkdtempSync('/tmp/pwc-uitest-')}`,
     '--no-first-run', '--no-default-browser-check', '--hide-scrollbars', '--force-color-profile=srgb', 'about:blank'], { stdio: 'ignore' });
   procs.push(chrome);
@@ -146,50 +163,40 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   const maya = await newPage('maya'), sam = await newPage('sam'), leo = await newPage('leo');
   for (const p of [maya, sam, leo]) await p.size(1100, 700);
 
-  // ── Maya starts a network ──
+  // ── Getting in: invite code first, then the username box appears ──
   await maya.goto(url);
   await maya.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
-  await maya.shot('welcome.png');
-  await maya.click('#goCreate');
-  await maya.fill('#createServer', `ws://127.0.0.1:${RELAY_PORT}`);
-  await maya.fill('#createName', 'maya k');
-  await maya.click('#createNext');
-  assert((await maya.js(`return $('createErr').textContent`)).includes('letters, numbers'), 'spaces refused in usernames');
-  await maya.fill('#createName', 'maya');
-  await maya.click('#createNext');
+  assert(await maya.js(`return $('joinMore').classList.contains('hidden') && $('joinRow').classList.contains('hidden')`), 'no username box before a code');
+  await maya.fill('#joinCode', 'PWC1.notarealcode');
+  await maya.until(`$('joinErr').textContent.includes("isn't valid")`, 'bad code refused');
+  assert(await maya.js(`return $('joinMore').classList.contains('hidden')`), 'still no username box');
+  const code1 = await inviteCode();
+  await maya.fill('#joinCode', code1);
+  await maya.until(`!$('joinMore').classList.contains('hidden')`, 'username box');
+  await maya.fill('#joinName', 'maya k');
+  await maya.click('#joinNext');
+  assert((await maya.js(`return $('joinErr').textContent`)).includes('letters, numbers'), 'spaces refused in usernames');
+  await maya.fill('#joinName', 'maya');
+  await maya.click('#joinNext');
   await maya.fill('#newPin', '12'); await maya.fill('#newPin2', '12');
   await maya.click('#setPinGo');
   assert((await maya.js(`return $('setPinErr').textContent`)).includes('4 to 12'), 'short PIN refused');
   await setPin(maya, '1234');
-  // The relay has no OWNER_KEY yet, so privatewebchat walks Maya through adding it
-  await maya.until(`$('modalCard').dataset.kind === 'setup'`, 'owner setup');
-  await maya.shot('owner-key.png');
-  const ownerKey = await maya.js(`return document.querySelector('#modalCard .box').textContent`);
-  await stopRelay();
-  await startRelay(ownerKey);
   await online(maya);
-  console.log('✓ owner set up the network');
+  console.log('✓ invite code first, then username; maya joined');
 
-  // ── Invites ──
-  const code1 = await invite(maya);
-  await maya.shot('invite.png');
-  await maya.clickText('Close');
-  await join(sam, code1, 'sam', '5678');
-  assert(await sam.js(`return $('inviteBtn').classList.contains('hidden')`), 'only the developer can invite');
-  console.log('✓ sam joined with an invite (members can\'t invite)');
+  const code2 = await inviteCode();
+  await join(sam, code2, 'sam', '5678');
+  console.log('✓ sam joined');
   const reuse = await newPage('reuse');
   await reuse.size(1100, 700);
-  await reuse.goto(url);
-  await reuse.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
-  await reuse.fill('#joinCode', code1); await reuse.fill('#joinName', 'eve');
-  await reuse.until(`$('joinFrom').textContent.includes('Invite from')`, 'invite check');
+  await enterCode(reuse, code2);
+  await reuse.fill('#joinName', 'eve');
   await reuse.click('#joinNext');
   await reuse.fill('#newPin', '1111'); await reuse.fill('#newPin2', '1111'); await reuse.click('#setPinGo');
   await reuse.until(`!$('sGone').classList.contains('hidden')`, 'refused');
   console.log('✓ a used invite is refused');
-  const code2 = await invite(maya);
-  await maya.clickText('Close');
-  await join(leo, code2, 'leo', '2468');
+  await join(leo, await inviteCode(), 'leo', '2468');
   console.log('✓ leo joined');
 
   // ── General: everyone in the network ──
@@ -206,7 +213,6 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
 
   // ── Friends ──
   await nav(sam, 'Friends'); await tab(sam, 'add');
-  await sam.shot('add-friend.png');
   await background(maya, true);
   await sam.fill('#friendsBody .addbox input', 'MAYA');
   await sam.clickText('Send friend request');
@@ -218,7 +224,6 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await rowAction(leo, 'maya', 'Add friend');
   await maya.until(`$('friendsBadge').textContent === '2'`, 'two requests');
   await nav(maya, 'Friends'); await tab(maya, 'pending');
-  await maya.shot('friends-pending.png');
   await rowAction(maya, 'sam', 'Accept');
   await rowAction(maya, 'leo', 'Accept');
   await sam.until(`$('friendsBody').textContent.includes('Friends')`, 'sam sees friendship');
@@ -264,7 +269,6 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await nav(maya, 'sam');
   await maya.until(`$('log').textContent.includes('See you Saturday')`, 'DM thread');
   await maya.js(`$('msg').blur()`);
-  await maya.shot('dm.png');
   await nav(maya, 'Friends'); await tab(maya, 'online');
   // A notification while blacked out would give privatewebchat away, so there are none
   await maya.js(`PwcPanic()`);
@@ -294,9 +298,6 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.click('#settingsBtn');
   await maya.until(`$('modalCard').textContent.includes('Black-out key')`, 'settings');
   await maya.js(`for (const b of document.querySelectorAll('#modalCard b')) if (b.textContent.includes('127.0.0.1')) b.textContent = 'your-privatewebchat.onrender.com'`);
-  await maya.size(1100, 980);
-  await maya.shot('settings.png');
-  await maya.size(1100, 700);
   await maya.clickText('Close');
   await nav(maya, 'Weekend plans');
   for (const t of ['Matrix', 'Amber', 'Midnight']) {
@@ -308,8 +309,7 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   console.log('✓ themes switch from Settings → Appearance');
   await nav(maya, 'Friends'); await tab(maya, 'all');
   await maya.js(`[...document.querySelectorAll('#friendsBody .frow')].find(r => r.querySelector('.who b').textContent === 'sam').click()`);
-  await maya.until(`$('modalCard').textContent.includes('Invited by')`, 'profile');
-  await maya.shot('profile.png');
+  await maya.until(`$('modalCard').textContent.includes('Verify safety number')`, 'profile');
   await maya.clickText('Verify safety number');
   await maya.until(`$('modalCard').textContent.includes('Safety number for')`, 'safety number');
   const theirs = await maya.js(`return document.querySelector('#modalCard .box').textContent`);
@@ -341,7 +341,6 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.click('#unlockGo');
   await maya.until(`$('unlockErr').textContent === 'Wrong PIN'`, 'wrong PIN');
   await maya.fill('#unlockPin', '1234');
-  await maya.shot('unlock.png');
   await maya.click('#unlockGo');
   await maya.until(`!$('sMain').classList.contains('hidden')`, 'unlocked');
   await online(maya);
@@ -352,14 +351,10 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   console.log('✓ PIN required on launch, history and friends kept');
 
   // ── Usernames are unique ──
-  const code3 = await invite(maya);
-  await maya.clickText('Close');
   const dup = await newPage('dup');
   await dup.size(1100, 700);
-  await dup.goto(url);
-  await dup.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
-  await dup.fill('#joinCode', code3); await dup.fill('#joinName', 'SAM');
-  await dup.until(`$('joinFrom').textContent.includes('Invite from')`, 'invite check');
+  await enterCode(dup, await inviteCode());
+  await dup.fill('#joinName', 'SAM');
   await dup.click('#joinNext');
   await setPin(dup, '1357');
   await dup.until(`$('modalCard').dataset.kind === 'rename'`, 'username taken');
@@ -402,13 +397,20 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert.strictEqual(await leo.js(`return document.documentElement.dataset.theme`), 'kali', 'wipe resets the theme');
   console.log('✓ wipe PIN erases everything and privatewebchat opens as new');
 
-  // ── Removing a member ──
-  await nav(maya, 'Friends'); await tab(maya, 'all');
-  await maya.js(`[...document.querySelectorAll('#friendsBody .frow')].find(r => r.querySelector('.who b').textContent === 'sam').click()`);
-  await maya.clickText('Remove from network');
-  await maya.clickText('Remove');
+  // ── Removing a member (tools/owner.js remove sam) ──
+  const dir = await new Promise(async res => {
+    const ws = new WebSocket(`ws://127.0.0.1:${RELAY_PORT}`);
+    ws.onmessage = async e => {
+      const m = JSON.parse(e.data);
+      if (m.t === 'hello') ws.send(JSON.stringify({ t: 'owner', sig: await P.sign(owner.keys.sigPriv, ['pwc-owner', m.nonce]) }));
+      if (m.t === 'owner_dir') { ws.close(); res(m.dir); }
+    };
+  });
+  await ownerRemove(dir.find(c => c.m.name === 'sam').m);
   await sam.until(`!$('sGone').classList.contains('hidden')`, 'sam removed');
-  console.log('✓ owner removed a member, who was disconnected');
+  await nav(maya, 'Friends'); await tab(maya, 'all');
+  await maya.until(`![...document.querySelectorAll('#friendsBody .who b')].some(b => b.textContent === 'sam')`, 'sam gone for maya');
+  console.log('✓ the owner removed a member, who was disconnected');
 
   console.log('\nAll UI tests passed');
   for (const p of procs) p.kill();

@@ -5,7 +5,7 @@ set -e
 cd "$(dirname "$0")/.."
 mkdir -p build
 cc -O2 -o build/embed src/embed.c
-build/embed build/ui.h ui index.html style.css protocol.js vault.js app.js
+build/embed build/ui.h ui index.html style.css config.js protocol.js vault.js app.js
 FLAGS="-O2 -DWEBVIEW_STATIC -DPWC_SELFTEST -Ivendor/webview -Ibuild -Isrc"
 clang++ $FLAGS -std=c++14 -w -c src/webview.cc -o build/webview-test.o
 clang $FLAGS -std=gnu11 -c src/main.c -o build/main-test.o
