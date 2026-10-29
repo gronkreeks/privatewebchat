@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connection Test</title>
+<style>
+  :root { --bg: #0e0e0e; --fg: #e8e8e8; --dim: #8a8a8a; --line: #2a2a2a; --ok: #4fc36b; --bad: #ff5c5c; --wait: #e0b341; --accent: #367bf0; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p { color: var(--dim); margin: 0 0 20px; }
+  button { font: inherit; background: var(--accent); color: #fff; border: 0; border-radius: 6px; padding: 10px 18px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  button.ghost { background: transparent; border: 1px solid var(--line); color: var(--fg); }
+  .rows { margin: 24px 0; border-top: 1px solid var(--line); }
+  .row { display: flex; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .row .mark { width: 20px; flex: none; }
+  .row .name { flex: 1; min-width: 0; }
+  .row .detail { color: var(--dim); font-size: 13px; overflow-wrap: anywhere; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .wait { color: var(--wait); }
+  textarea { width: 100%; height: 180px; background: #000; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; font: 12px/1.4 inherit; font-family: inherit; }
+  .bar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  #copied { color: var(--ok); }
+</style>
+</head>
+<body>
+<main>
+  <h1>privatewebchat connection test</h1>
+  <p>Run this on the network where the app doesn't work. It takes about 45 seconds. Then copy the results and bring them back.</p>
+  <div class="bar"><button id="go">Run test</button></div>
+  <div class="rows" id="rows"></div>
+  <div id="out" hidden>
+    <textarea id="result" readonly></textarea>
+    <div class="bar" style="margin-top:10px"><button class="ghost" id="copy">Copy results</button><span id="copied"></span></div>
+  </div>
+</main>
+<script>
+// Each check targets privatewebchat's relay and, for comparison, EduArcade's chat server (known to work)
+const PWC = 'privatewebchat.onrender.com', EDU = 'frontier-server.onrender.com';
+const HOLD_MS = 30000;
+const results = { at: new Date().toISOString(), ua: navigator.userAgent, online: navigator.onLine, checks: {} };
+const rows = document.getElementById('rows');
+
+function row(key, label) {
+  const r = document.createElement('div'); r.className = 'row';
+  r.innerHTML = '<span class="mark wait">…</span><div class="name"></div>';
+  r.querySelector('.name').textContent = label;
+  const d = document.createElement('div'); d.className = 'detail'; r.querySelector('.name').appendChild(d);
+  rows.appendChild(r);
+  return (ok, detail, data) => {
+    const m = r.querySelector('.mark'); m.className = 'mark ' + (ok ? 'ok' : 'bad'); m.textContent = ok ? '✓' : '✗';
+    d.textContent = detail;
+    results.checks[key] = { ok, detail, ...data };
+  };
+}
+
+// HTTPS reachability: an opaque no-cors fetch resolves if the host answered at all, and rejects on a network block
+async function https(host) {
+  const t0 = performance.now();
+  try {
+    await fetch(`https://${host}/health?${Date.now()}`, { mode: 'no-cors', cache: 'no-store', signal: AbortSignal.timeout(75000) });
+    return { ok: true, ms: Math.round(performance.now() - t0) };
+  } catch (e) { return { ok: false, ms: Math.round(performance.now() - t0), err: String(e && e.name || e) }; }
+}
+
+// WebSocket on 443: does it open, does the first message arrive, and does it stay open for HOLD_MS
+function wss(host) {
+  return new Promise(res => {
+    const t0 = performance.now(), r = { opened: false, firstMsg: null, heldMs: 0 };
+    const done = () => { clearTimeout(timer); r.ms = Math.round(performance.now() - t0); try { ws.close(); } catch (e) {} res(r); };
+    let ws, opened = 0;
+    try { ws = new WebSocket(`wss://${host}`); } catch (e) { r.err = String(e); return res(r); }
+    const timer = setTimeout(() => { if (!r.opened) r.err = 'timed out'; done(); }, 75000);
+    ws.onopen = () => { r.opened = true; opened = performance.now(); r.openMs = Math.round(opened - t0); setTimeout(() => { r.heldMs = HOLD_MS; r.held = true; done(); }, HOLD_MS); };
+    ws.onmessage = e => { if (r.firstMsg === null) { try { r.firstMsg = JSON.parse(e.data).t || 'json'; } catch (x) { r.firstMsg = 'non-json'; } } };
+    ws.onerror = () => { r.err = 'error event'; };
+    ws.onclose = e => { r.closeCode = e.code; r.closeReason = e.reason; if (opened) r.heldMs = Math.round(performance.now() - opened); done(); };
+  });
+}
+
+async function run() {
+  document.getElementById('go').disabled = true;
+  rows.textContent = ''; results.checks = {};
+  const jobs = [];
+  for (const [name, host] of [['pwc', PWC], ['edu', EDU]]) {
+    const label = name === 'pwc' ? 'privatewebchat' : 'EduArcade (comparison)';
+    const h = row(name + '_https', `${label}: HTTPS ${host}`);
+    jobs.push(https(host).then(r => h(r.ok, r.ok ? `reached in ${r.ms} ms` : `blocked or unreachable (${r.err}, ${r.ms} ms)`, r)));
+    const w = row(name + '_wss', `${label}: WebSocket wss://${host} (port 443, held ${HOLD_MS / 1000}s)`);
+    jobs.push(wss(host).then(r => {
+      const ok = r.opened && r.held;
+      const detail = !r.opened ? `never opened (${r.err || 'closed ' + r.closeCode})`
+        : !r.held ? `opened, then cut off after ${Math.round(r.heldMs / 1000)}s (close ${r.closeCode})`
+        : `open ${r.openMs} ms, stayed up ${HOLD_MS / 1000}s` + (r.firstMsg ? `, got "${r.firstMsg}"` : '');
+      w(ok, detail, r);
+    }));
+  }
+  await Promise.all(jobs);
+  results.online = navigator.onLine;
+  const text = 'PWC-NETTEST ' + JSON.stringify(results);
+  document.getElementById('result').value = text;
+  document.getElementById('out').hidden = false;
+  document.getElementById('go').disabled = false;
+}
+document.getElementById('go').onclick = run;
+document.getElementById('copy').onclick = async () => {
+  const t = document.getElementById('result');
+  try { await navigator.clipboard.writeText(t.value); } catch (e) { t.select(); document.execCommand('copy'); }
+  document.getElementById('copied').textContent = 'Copied';
+};
+</script>
+</body>
+</html>

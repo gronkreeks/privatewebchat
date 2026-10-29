@@ -106,15 +106,49 @@ static HWND hw;
 static WNDPROC orig_proc;
 static void (*hot_fn)(void);
 static int hot_on;
+static void (*hide_fn)(void);
+static int quitting;
 #define WM_TRAY (WM_APP + 1)
+#define TRAY_OPEN 1
+#define TRAY_QUIT 2
+static int tray_add(void);
+static void show_window(HWND h) {
+  ShowWindow(h, IsIconic(h) ? SW_RESTORE : SW_SHOW);
+  SetForegroundWindow(h);
+}
+static void tray_menu(HWND h) {
+  HMENU m = CreatePopupMenu();
+  AppendMenuW(m, MF_STRING, TRAY_OPEN, L"Open privatewebchat");
+  AppendMenuW(m, MF_SEPARATOR, 0, NULL);
+  AppendMenuW(m, MF_STRING, TRAY_QUIT, L"Quit privatewebchat");
+  SetMenuDefaultItem(m, TRAY_OPEN, FALSE);
+  POINT p;
+  GetCursorPos(&p);
+  SetForegroundWindow(h);   // otherwise the menu doesn't go away when clicking elsewhere
+  int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, p.x, p.y, 0, h, NULL);
+  DestroyMenu(m);
+  if (cmd == TRAY_OPEN) show_window(h);
+  else if (cmd == TRAY_QUIT) { quitting = 1; PostMessageW(h, WM_CLOSE, 0, 0); }
+}
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
   if (m == WM_HOTKEY && wp == 1) { if (hot_fn) hot_fn(); return 0; }
-  // Clicking a notification or the tray icon brings privatewebchat back
-  if (m == WM_TRAY && (LOWORD(lp) == NIN_BALLOONUSERCLICK || LOWORD(lp) == WM_LBUTTONUP)) {
-    if (IsIconic(h)) ShowWindow(h, SW_RESTORE);
-    SetForegroundWindow(h);
+  // Closing the window only hides it in the tray, until Quit in the tray icon's menu
+  if (m == WM_CLOSE && hide_fn && !quitting) {
+    hide_fn();
+    ShowWindow(h, SW_HIDE);
     return 0;
   }
+  // Clicking a notification or the tray icon brings privatewebchat back; right-click for the menu
+  if (m == WM_TRAY) {
+    UINT ev = LOWORD(lp);
+    if (ev == NIN_BALLOONUSERCLICK || ev == WM_LBUTTONUP) show_window(h);
+    else if (ev == WM_RBUTTONUP || ev == WM_CONTEXTMENU) tray_menu(h);
+    return 0;
+  }
+  // Explorer restarted: the tray icon has to be added again
+  static UINT taskbar_created;
+  if (!taskbar_created) taskbar_created = RegisterWindowMessageW(L"TaskbarCreated");
+  if (m == taskbar_created && hide_fn) { tray_add(); return 0; }
   return CallWindowProcW(orig_proc, h, m, wp, lp);
 }
 // The app icon from win/app.rc, at a given size (falls back to the standard one)
@@ -154,20 +188,25 @@ static void utf8_to(wchar_t *out, int n, const char *s) {
   if (!MultiByteToWideChar(CP_UTF8, 0, s, -1, out, n)) out[0] = 0;
   out[n - 1] = 0;
 }
+static int tray_add(void) {
+  nid.cbSize = sizeof nid;
+  nid.hWnd = hw;
+  nid.uID = 1;
+  nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+  nid.uCallbackMessage = WM_TRAY;
+  nid.hIcon = app_icon(SM_CXSMICON);
+  wcscpy(nid.szTip, L"privatewebchat");
+  tray_on = Shell_NotifyIconW(NIM_ADD, &nid) != 0;
+  return tray_on;
+}
+void plat_close_to_tray(void (*on_hide)(void)) {
+  hide_fn = on_hide;
+  if (hw && !tray_on) tray_add();
+}
 void plat_notify_setup(void) {}
 void plat_notify(const char *title, const char *body) {
   if (!hw) return;
-  if (!tray_on) {
-    nid.cbSize = sizeof nid;
-    nid.hWnd = hw;
-    nid.uID = 1;
-    nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-    nid.uCallbackMessage = WM_TRAY;
-    nid.hIcon = app_icon(SM_CXSMICON);
-    wcscpy(nid.szTip, L"privatewebchat");
-    tray_on = Shell_NotifyIconW(NIM_ADD, &nid) != 0;
-    if (!tray_on) return;
-  }
+  if (!tray_on && !tray_add()) return;
   nid.uFlags = NIF_INFO;
   nid.dwInfoFlags = NIIF_INFO;
   utf8_to(nid.szInfoTitle, (int)(sizeof nid.szInfoTitle / sizeof(wchar_t)), title);

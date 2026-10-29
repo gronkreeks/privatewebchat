@@ -18,6 +18,7 @@
   window.pwc_title = async t => { document.title = t; };
   window.pwc_copy = async t => { window.__copied = t; };
   window.pwc_paste = async () => window.__clipboard || null;
+  window.pwc_owner_key = async () => window.__ownerKey || null;
 })();
 // Desktop notifications are recorded so the test can check them
 window.__notes = [];

@@ -329,6 +329,28 @@ static void b_paste(const char *id, const char *req, void *arg) {
   ret(id, q ? q : "null");
   free(q); free(t);
 }
+// The owner's public key, when this computer holds the owner key (~/.privatewebchat/owner.json, made by
+// tools/owner.js), so the app can show the owner's commands. Only the public key leaves this function.
+static void b_owner_key(const char *id, const char *req, void *arg) {
+  (void)req; (void)arg;
+#ifdef _WIN32
+  const char *home = getenv("USERPROFILE");
+#else
+  const char *home = getenv("HOME");
+#endif
+  char path[1024], buf[8192], *pub = NULL;
+  size_t n = 0;
+  FILE *f = NULL;
+  if (home && snprintf(path, sizeof path, "%s/.privatewebchat/owner.json", home) < (int)sizeof path) f = fopen(path, "rb");
+  if (f) { n = fread(buf, 1, sizeof buf - 1, f); fclose(f); }
+  buf[n] = 0;
+  char *k = strstr(buf, "\"sigPub\"");
+  char *a = k ? strchr(k + 8, '"') : NULL;
+  char *b = a ? strchr(a + 1, '"') : NULL;
+  if (b && b - a - 1 == 88) pub = json_quote(a + 1, (size_t)(b - a - 1));
+  ret(id, pub ? pub : "null");
+  free(pub);
+}
 static void b_notify_setup(const char *id, const char *req, void *arg) { (void)req; (void)arg; plat_notify_setup(); ret(id, "null"); }
 static void b_notify(const char *id, const char *req, void *arg) {
   (void)arg;
@@ -352,7 +374,12 @@ static void b_copy(const char *id, const char *req, void *arg) {
   ret(id, "null");
 }
 
-static void after_start(webview_t wv, void *arg) { (void)arg; plat_init(webview_get_window(wv)); }
+static void on_hide(void) { webview_eval(w, "window.PwcAway && window.PwcAway()"); }
+static void after_start(webview_t wv, void *arg) {
+  (void)arg;
+  plat_init(webview_get_window(wv));
+  plat_close_to_tray(on_hide);
+}
 
 #ifdef PWC_SELFTEST
 // Test builds only (tools/selftest.sh): checks WebCrypto, the bindings and WebSocket inside the
@@ -425,6 +452,7 @@ int main(void) {
   webview_bind(w, "pwc_title", b_title, NULL);
   webview_bind(w, "pwc_copy", b_copy, NULL);
   webview_bind(w, "pwc_paste", b_paste, NULL);
+  webview_bind(w, "pwc_owner_key", b_owner_key, NULL);
   webview_bind(w, "pwc_notify_setup", b_notify_setup, NULL);
   webview_bind(w, "pwc_notify", b_notify, NULL);
   webview_dispatch(w, after_start, NULL);

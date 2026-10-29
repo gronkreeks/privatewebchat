@@ -2,3 +2,4 @@ node_modules/
 app/build/
 app/dist/
 .DS_Store
+app/vendor/cef/

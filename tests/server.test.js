@@ -116,6 +116,26 @@ const last = c => c.got.pop();
   assert.deepStrictEqual(last(b5).dir.map(c => c.m.name), ['bob'], 'removed member not re-admitted from an uploaded directory');
   assert.strictEqual(last(await client(alice, ac)).why, 'member', 'removed member refused after restart');
 
+  // Usernames go to whoever had them first: backdating the join time in a cert doesn't help
+  const carol = await P.generateKeys(), mal = await P.generateKeys();
+  const certAt = async (keys, name, at) => {
+    const inv = await P.makeInvite(oc, ok, 24), m = { name, sig: keys.sigPub, ecdh: keys.ecdhPub, at };
+    return { m, by: inv.g, s: await P.sign(inv.k, ['pwc-join', m]) };
+  };
+  const cc = await P.acceptInvite(await P.makeInvite(oc, ok, 24), carol, 'carol');
+  assert.strictEqual(last(await client(carol, cc)).t, 'welcome');
+  assert.strictEqual(last(await client(mal, await certAt(mal, 'Carol', 1))).why, 'name', 'backdated cert cannot take a name');
+
+  // After a restart, whoever grabs a name first gives way once another member's app vouches for the real holder
+  srv.kill(); await sleep(300);
+  await startServer(ok.sigPub);
+  const mc = await client(mal, await certAt(mal, 'carol', Date.now()));
+  assert.strictEqual(last(mc).t, 'welcome', 'name free while the server is empty');
+  assert.strictEqual(last(await client(carol, cc)).why, 'name', 'real holder waits while nobody vouches for her');
+  await client(bob, bc, { dir: [bc, cc], removals: rem });
+  assert.strictEqual((await mc.next('denied')).why, 'name', 'name grabber dropped');
+  assert.strictEqual(last(await client(carol, cc)).t, 'welcome', 'real holder gets her name back');
+
   // A server without OWNER_KEY
   srv.kill(); await sleep(300);
   await startServer('');

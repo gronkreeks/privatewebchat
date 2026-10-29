@@ -8,6 +8,7 @@
   const $ = id => document.getElementById(id);
   const MAX_HISTORY = 3000, SHOWN = 400;
   const DM_TTL = 24 * 3600000;   // direct messages are deleted after 24 hours, for privacy and to save space
+  const OUTBOX_TTL = 14 * 24 * 3600000, RESEND_AFTER = 6 * 3600000;   // how long, and how often, unconfirmed messages are resent
 
   let D = null;        // the unlocked vault (Vault.data)
   const S = {
@@ -30,7 +31,7 @@
       else if (k === 'style') e.style.cssText = v;   // the CSP blocks style attributes, but not this
       else e.setAttribute(k, v === true ? '' : v);
     }
-    for (const k of kids.flat()) if (k != null && k !== false) e.append(k.nodeType ? k : String(k));
+    for (const k of kids.flat(Infinity)) if (k != null && k !== false) e.append(k.nodeType ? k : String(k));
     return e;
   }
   const screens = ['sWelcome', 'sSetPin', 'sUnlock', 'sGone', 'sMain'];
@@ -99,7 +100,7 @@
     const card = $('modalCard');
     card.innerHTML = '';
     card.dataset.kind = '';
-    card.append(title ? h('h2', { text: title }) : '', ...body.filter(x => x != null && x !== false));
+    card.append(title ? h('h2', { text: title }) : '', ...body.flat(Infinity).filter(x => x != null && x !== false));
     $('modal').classList.remove('hidden');
     const f = card.querySelector('input:not([type=checkbox]), textarea');
     if (f) setTimeout(() => f.focus(), 30);
@@ -247,7 +248,7 @@
   // ──────────── Unlocked ────────────
   async function start() {
     D = Vault.data;
-    D.friends = D.friends || {}; D.blocked = D.blocked || {};
+    D.friends = D.friends || {}; D.blocked = D.blocked || {}; D.outbox = D.outbox || {};
     if (D.settings.notify === undefined) { D.settings.notify = true; D.settings.previews = true; }
     S.unlocked = true;
     if (D.server !== PwcConfig.SERVER) { D.server = PwcConfig.SERVER; Vault.save(); }
@@ -266,6 +267,9 @@
   async function learn(cert, quiet) {
     const info = await P.verifyCert(cert, D.owner);
     if (!info || !info.by || P.isRemoved(info, S.removed)) return null;
+    // Usernames and invites belong to whoever this app saw first, so nobody can pose as an existing member
+    const lower = info.name.toLowerCase();
+    if (Object.values(S.info).some(x => x.id !== info.id && (x.ik === info.ik || x.name.toLowerCase() === lower))) return null;
     const isNew = !S.info[info.id];
     S.info[info.id] = info;
     if (!D.dir[info.id] || D.names[info.id] !== info.name) { D.dir[info.id] = cert; D.names[info.id] = info.name; Vault.save(); }
@@ -309,16 +313,22 @@
       let m; try { m = JSON.parse(e.data); } catch (x) { return; }
       queue = queue.then(() => onMsg(m)).catch(x => console.error(x));
     };
-    ws.onclose = () => {
+    ws.onclose = e => {
       ws = null; S.live = false; S.online.clear();
       failPending();
       if (stopped) return;
-      if (S.status === 'online' || S.status === 'connecting') setStatus('offline', 'Disconnected. Reconnecting…', true);
+      // The close code says why: 1006 is a dropped connection (network change, sleep, or the server restarting)
+      const now = h('button', { class: 'link', onclick: reconnectNow }, 'Reconnect now');
+      if (S.status === 'online' || S.status === 'connecting' || S.status === 'offline') setStatus('offline', `Disconnected (${e.code}${e.reason ? ' ' + e.reason : ''}). Reconnecting…`, true, now);
       retryT = setTimeout(connect, retry);
-      retry = Math.min(30000, retry * 1.6);
+      retry = Math.min(10000, retry * 1.6);
       renderSidebar(); if (S.view === 'friends') renderFriends();
     };
   }
+  // Waking from sleep or rejoining a network shouldn't wait out the retry timer
+  function reconnectNow() { if (!S.unlocked || stopped || ws) return; retry = 1500; connect(); }
+  window.addEventListener('online', reconnectNow);
+  window.addEventListener('focus', reconnectNow);
   function stopNet() { stopped = true; clearTimeout(retryT); if (ws) { try { ws.close(); } catch (e) { } } ws = null; }
 
   async function onMsg(m) {
@@ -329,6 +339,8 @@
           ws.close();
           return;
         }
+        S.boot = m.boot || null;
+        if (S.boot && D.serverBoot !== S.boot) { if (D.serverBoot) clearHistory(); D.serverBoot = S.boot; await Vault.saveNow(); }
         wsSend({ t: 'auth', cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals });
         break;
       case 'welcome':
@@ -341,6 +353,7 @@
         S.live = true;
         setStatus('online');
         render();
+        resendOutbox();
         break;
       case 'member': await learn(m.cert); renderSidebar(); if (S.view === 'friends') renderFriends(); break;
       case 'presence':
@@ -353,7 +366,9 @@
       case 'error': markFailed(m.ref); err('chatErr', m.msg); break;
       case 'denied':
         stopNet();
-        if (m.why === 'name' && D.pendingInvite) { setStatus('offline', 'That username is already taken.', true, h('button', { class: 'link', onclick: rename }, 'Pick another')); rename(); }
+        // Right after a server restart someone else may hold our name until another member's app vouches for us
+        if (m.why === 'name' && !D.pendingInvite) { setStatus('offline', 'The server is still catching up after a restart. Retrying…', true); retryT = setTimeout(() => { stopped = false; connect(); }, 60000); }
+        else if (m.why === 'name' && D.pendingInvite) { setStatus('offline', 'That username is already taken.', true, h('button', { class: 'link', onclick: rename }, 'Pick another')); rename(); }
         else if (m.why === 'member' || m.why === 'name') gone("This device can't connect", m.msg);
         else if (m.why === 'setup') setStatus('setup', m.msg, true);
         else setStatus('offline', m.msg, true);
@@ -400,13 +415,17 @@
     if (!from || D.blocked[env.from]) return;
     const p = await S.box.open(env, from.ecdh);
     if (!p || typeof p !== 'object') return;
+    if (p.k === 'rcpt') return onReceipt(env.from, p.q);
+    if (typeof p.q === 'string' && p.q.length <= 32) receiptLater(env.from, p.q);
+    // A resent message keeps the time it was first sent
+    const at = typeof p.at === 'number' && p.at <= env.at && p.at > env.at - OUTBOX_TTL ? p.at : env.at;
     if (p.k === 'friend') return onFriend(p.op, env.from);
     if (p.k === 'room') { applyRoom(p.room, env.from); render(); return; }
     if (p.k !== 'msg' || typeof p.text !== 'string' || !p.text.trim() || typeof p.mid !== 'string' || p.mid.length > 40) return;
     let rid;
     if (p.room === 'general') rid = 'general';
     else if (p.room === dmId(env.from)) {
-      if (!isFriend(env.from) || env.at < Date.now() - DM_TTL) return;   // friends only, and never older than 24 hours
+      if (!isFriend(env.from) || at < Date.now() - DM_TTL) return;   // friends only, and never older than 24 hours
       rid = p.room; ensureDm(env.from);
     } else {
       if (p.meta) applyRoom(p.meta, env.from);
@@ -414,7 +433,30 @@
       if (!r || r.kind !== 'group' || !r.members.includes(env.from)) return;
       rid = r.id;
     }
-    addMsg(rid, { mid: p.mid, from: env.from, text: p.text.slice(0, P.MAX_TEXT), at: env.at });
+    addMsg(rid, { mid: p.mid, from: env.from, text: p.text.slice(0, P.MAX_TEXT), at });
+  }
+  // Receipts: each app tells the sender, end to end, what it has saved, so the sender can stop resending
+  const rcpts = new Map();
+  let rcptT = null;
+  function receiptLater(from, q) {
+    if (!rcpts.has(from)) rcpts.set(from, []);
+    rcpts.get(from).push(q);
+    clearTimeout(rcptT);
+    rcptT = setTimeout(async () => {
+      const all = [...rcpts]; rcpts.clear();
+      try { await Vault.saveNow(); } catch (e) { return; }
+      for (const [id, qs] of all) sendPayload({ kind: 'dm', with: id }, { k: 'rcpt', q: qs.slice(0, 500) }).catch(() => { });
+    }, 1500);
+  }
+  function onReceipt(from, qs) {
+    if (!Array.isArray(qs)) return;
+    for (const q of qs) {
+      const o = typeof q === 'string' && D.outbox[q];
+      if (!o) continue;
+      o.to = o.to.filter(id => id !== from);
+      if (!o.to.length) delete D.outbox[q];
+    }
+    Vault.save();
   }
   const dmId = other => 'dm:' + [D.me, other].sort().join(':');
   const dmWith = id => id.slice(3).split(':').find(x => x !== D.me);
@@ -475,9 +517,10 @@
   }
   setInterval(pruneDms, 60000);
   window.addEventListener('focus', pruneDms);
-  // Desktop notifications, only while privatewebchat is in the background and never while blacked out
+  // Desktop notifications, only while privatewebchat is in the background and never while blacked out,
+  // except when the window was closed to the tray / menu bar (S.away)
   function notify(title, body) {
-    if (!D.settings.notify || S.black || document.hasFocus()) return;
+    if (!D.settings.notify || (S.black && !S.away) || document.hasFocus()) return;
     native.notify(title, body);
     native.attention();
   }
@@ -542,10 +585,47 @@
   async function sendPayload(r, payload, ref) {
     const to = recipients(r);
     if (!to.length) return false;
+    // The server also drops undelivered DMs after 24 hours
+    const ttl = r.kind === 'dm' && payload.k === 'msg' ? DM_TTL : undefined;
+    const t = Date.now();
+    if (payload.k !== 'rcpt') payload = { ...payload, q: P.randomHex(8), at: t };
     const sealed = await S.box.seal(payload, to);
     if (ref) sentRefs.set(ref, r.id);
-    // The server also drops undelivered DMs after 24 hours
-    return wsSend({ t: 'send', ref, ttl: r.kind === 'dm' && payload.k === 'msg' ? DM_TTL : undefined, ...sealed });
+    if (!wsSend({ t: 'send', ref, ttl, ...sealed })) return false;
+    if (payload.q) { D.outbox[payload.q] = { payload, to: to.map(x => x.id), at: t, ttl: ttl || OUTBOX_TTL, sent: t, wait: RESEND_AFTER, boot: S.boot }; Vault.save(); }
+    return true;
+  }
+  // Everything sent waits in D.outbox until each recipient's app confirms it, and is sent again after
+  // RESEND_AFTER, then twice as long each time. Recipients ignore repeats. A server restart clears
+  // the outbox along with everything else (clearHistory).
+  let resending = false;
+  async function resendOutbox() {
+    if (resending) return;
+    resending = true;
+    try {
+      for (const [q, o] of Object.entries(D.outbox)) {
+        const t = Date.now(), left = o.at + o.ttl - t;
+        o.to = o.to.filter(id => S.info[id]);
+        if (!o.to.length || left < 60000) { delete D.outbox[q]; Vault.save(); continue; }
+        if (o.boot === S.boot && t - o.sent < o.wait) continue;
+        const sealed = await S.box.seal(o.payload, o.to.map(id => ({ id, ecdh: S.info[id].ecdh })));
+        if (!wsSend({ t: 'send', ttl: left, ...sealed })) break;
+        if (o.boot === S.boot) o.wait *= 2;
+        o.boot = S.boot; o.sent = t;
+        Vault.save();
+        await new Promise(res => setTimeout(res, 400));   // stays under the server's rate limit
+      }
+    } finally { resending = false; }
+  }
+  setInterval(() => { if (S.live) resendOutbox(); }, 10 * 60000);
+  // Messages last only as long as the server keeps running: once it has gone offline (it comes back
+  // with a new boot id), every app deletes every message, including ones not yet delivered. Friends,
+  // groups and keys are kept.
+  function clearHistory() {
+    const at = Date.now(), text = 'The server went offline, so every message was deleted. Messages only last while the server is running.';
+    D.msgs = {}; D.unread = {}; D.outbox = {}; sentRefs.clear();
+    for (const id of Object.keys(D.rooms)) D.msgs[id] = [{ sys: true, text, at }];
+    render();
   }
   async function sendMsg() {
     const text = $('msg').value.replace(/\s+$/, '').replace(/^\n+/, '');
@@ -925,6 +1005,8 @@
     }
 
     const mine = await P.safetyNumber(S.info[D.me] || D.cert.m);
+    let ownerKey = null;
+    try { ownerKey = await window.pwc_owner_key(); } catch (e) { }
     modal('Settings',
       h('h3', { text: 'Appearance' }),
       themePicker(),
@@ -954,9 +1036,57 @@
       h('p', { class: 'hint' }, 'Server: ', h('b', { text: D.server.replace(/^wss:\/\//, '') })),
       h('label', { class: 'lbl', text: 'Your safety number' }), h('div', { class: 'box mono', text: mine }),
 
+      ownerKey === D.owner ? [
+        h('h3', { text: 'Owner' }),
+        h('p', { class: 'hint' }, 'This computer holds the owner key, so you can see the terminal commands for invites, members and the server.'),
+        h('div', { class: 'row', style: 'margin-top:0' }, h('button', { class: 'link', onclick: ownerCommands }, 'Owner commands')),
+      ] : null,
+
       h('h3', { text: 'Erase' }),
       h('div', { class: 'row', style: 'margin-top:0' }, h('button', { class: 'link danger', onclick: () => ask('Erase everything now?', 'This deletes your identity, every message and all settings from this computer. It cannot be undone.', 'Erase', wipe, true) }, 'Erase everything on this device')),
       closeBtn());
+  }
+
+  // ── Owner commands: only on the computer with the owner key, and only after the PIN ──
+  function ownerCommands() {
+    const pin = h('input', { class: 'in pin', type: 'password', inputmode: 'numeric', maxlength: 12, autocomplete: 'off', placeholder: 'PIN' });
+    digitsOnly(pin);
+    const note = h('div', { class: 'err' });
+    const go = h('button', { class: 'btn', onclick: async () => { if (await tryPin(pin.value, m => { note.textContent = m; })) showOwnerCommands(); } }, 'Show commands');
+    pin.addEventListener('keydown', e => { if (e.key === 'Enter') go.click(); });
+    modal('Owner commands', h('p', { class: 'hint', text: 'Enter your PIN to see them.' }), pin, note, h('div', { class: 'row end' }, go));
+    setTimeout(() => pin.focus(), 0);
+  }
+  function showOwnerCommands() {
+    const host = D.server.replace(/^wss?:\/\//, '').replace(/\/.*$/, '');
+    const groups = [
+      ['Invites', [
+        ['Make one invite code (works once, lasts 90 days)', 'node tools/owner.js invite'],
+        ['Make 5 codes that last 30 days', 'node tools/owner.js invite 5 30'],
+      ]],
+      ['Members', [
+        ["See who's in the network (● online, ○ offline)", 'node tools/owner.js members'],
+        ["Remove someone (they're disconnected and their invite stops working)", 'node tools/owner.js remove USERNAME'],
+      ]],
+      ['Server', [
+        ['Check the live server end to end (two test members join, swap a message and are removed)', 'node tools/livetest.js'],
+        ["Quick check that the server's up", `curl https://${host}/health`],
+        ['Print OWNER_KEY again, for Render', 'node tools/owner.js key'],
+        ['Test a network (open this page in a browser on that network)', 'open tools/nettest.html'],
+      ]],
+      ['App', [
+        ['Run the tests', 'node tests/protocol.test.js && node tests/server.test.js && node tests/ui/run.js'],
+        ['Build the Mac app', 'sh app/build-mac.sh'],
+      ]],
+    ];
+    modal('Owner commands',
+      h('p', { class: 'hint' }, 'Run these in Terminal from the privatewebchat folder (', h('b', { text: 'cd ~/hush' }), '). The owner key is ~/.privatewebchat/owner.json: keep a backup of it somewhere safe.'),
+      groups.map(([title, cmds]) => [h('h3', { text: title }), cmds.map(([what, cmd]) => {
+        const btn = h('button', { class: 'link', onclick: () => { copy(cmd); btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); } }, 'Copy');
+        return [h('p', { class: 'hint', style: 'margin:0.8rem 0 0.25rem', text: what }), h('div', { class: 'row', style: 'margin-top:0' }, h('div', { class: 'box mono', style: 'flex:1;min-width:0;overflow-wrap:anywhere;padding:0.45rem 0.7rem', text: cmd }), btn)];
+      })]),
+      closeBtn());
+    $('modalCard').dataset.kind = 'owner';
   }
 
   // ──────────── Black-out ────────────
@@ -975,7 +1105,7 @@
     setTimeout(() => $('blackPin').focus(), 0);
   }
   function unblack() {
-    S.black = false;
+    S.black = false; S.away = false;
     $('black').classList.add('hidden');
     $('app').classList.remove('hidden');
     if (D.unread[S.view] && document.hasFocus()) delete D.unread[S.view];
@@ -984,6 +1114,9 @@
   }
   const dots = () => { $('blackDots').textContent = '•'.repeat($('blackPin').value.length); };
   window.PwcPanic = blackout;
+  // Closing the window keeps privatewebchat running in the background: it comes back blacked out, so
+  // it takes the PIN to see anything, but notifications keep coming meanwhile
+  window.PwcAway = () => { blackout(); if (S.black) S.away = true; };
   // The black-out key is checked before anything else on the page sees it
   window.addEventListener('keydown', e => {
     if (!S.unlocked || S.black || S.capturing || !D.settings.panicCode) return;

@@ -282,6 +282,17 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.until(`$('black').classList.contains('hidden')`, 'back');
   await background(maya, false);
   console.log('✓ no notifications while blacked out');
+  // Closing the window to the tray / menu bar blacks out too, but notifications keep coming
+  await maya.js(`PwcAway()`);
+  await background(maya, true);
+  assert(await maya.js(`return !$('black').classList.contains('hidden')`), 'closed to the tray: blacked out');
+  await sam.say('Still there?');
+  await maya.until(`window.__notes.some(n => n.body === 'Still there?')`, 'notification while closed to the tray');
+  await maya.fill('#blackPin', '1234');
+  await maya.js(`$('blackPin').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+  await maya.until(`$('black').classList.contains('hidden')`, 'back from the tray');
+  await background(maya, false);
+  console.log('✓ notifications keep coming with the window closed to the tray; back takes the PIN');
 
   // ── Direct messages disappear after 24 hours ──
   await nav(maya, 'sam');
@@ -349,6 +360,50 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await tab(maya, 'all'); await nav(maya, 'Friends');
   assert(await maya.js(`return $('friendsBody').textContent.includes('leo')`), 'friends survive a restart');
   console.log('✓ PIN required on launch, history and friends kept');
+
+  // ── A server restart deletes every message, for everyone, including ones not yet delivered ──
+  await leo.reload();
+  await leo.until(`!$('sUnlock').classList.contains('hidden')`, 'leo locked and offline');
+  await nav(maya, 'General');
+  await maya.say('Sent while leo was away');
+  await sleep(500);
+  await stopRelay();
+  await startRelay(owner.keys.sigPub);
+  await online(maya);
+  await maya.until(`$('log').textContent.includes('The server went offline')`, 'maya sees the clear notice');
+  assert(!(await maya.js(`return $('log').textContent.includes('Sent while leo was away')`)), 'maya\'s copy is gone');
+  await nav(maya, 'Weekend plans');
+  assert(!(await maya.js(`return $('log').textContent.includes('see you there')`)), 'group history is gone');
+  await leo.fill('#unlockPin', '2468');
+  await leo.click('#unlockGo');
+  await online(leo);
+  await nav(leo, 'General');
+  await leo.until(`$('log').textContent.includes('The server went offline')`, 'leo sees the clear notice');
+  await sleep(1500);
+  assert(!(await leo.js(`return $('log').textContent.includes('Sent while leo was away')`)), 'undelivered message is not resent');
+  await tab(maya, 'all'); await nav(maya, 'Friends');
+  assert(await maya.js(`return $('friendsBody').textContent.includes('leo')`), 'friends survive');
+  console.log('✓ a server restart deletes every message for everyone; friends are kept');
+
+  // ── Owner commands: only where the owner key is, and only after the PIN ──
+  await sam.click('#settingsBtn');
+  assert(!(await sam.js(`return $('modalCard').textContent.includes('Owner commands')`)), 'no owner commands without the owner key');
+  await sam.js(`[...document.querySelectorAll('#modalCard button')].pop().click()`);
+  await maya.js(`window.__ownerKey = ${JSON.stringify(owner.keys.sigPub)}`);
+  await maya.click('#settingsBtn');
+  await maya.until(`$('modalCard').textContent.includes('Owner commands')`, 'owner section');
+  await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Owner commands').click()`);
+  await maya.fill('#modalCard input', '0000');
+  await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Show commands').click()`);
+  await maya.until(`$('modalCard').textContent.includes('Wrong PIN')`, 'wrong PIN refused');
+  await maya.fill('#modalCard input', '1234');
+  await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Show commands').click()`);
+  await maya.until(`$('modalCard').dataset.kind === 'owner' && $('modalCard').textContent.includes('node tools/owner.js invite')`, 'owner commands');
+  await maya.shot('owner-commands.png');
+  await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Copy').click()`);
+  assert.strictEqual(await maya.js(`return window.__copied`), 'node tools/owner.js invite', 'copy button');
+  await maya.js(`[...document.querySelectorAll('#modalCard button')].pop().click()`);
+  console.log('✓ owner commands show only with the owner key and the PIN');
 
   // ── Usernames are unique ──
   const dup = await newPage('dup');

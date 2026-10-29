@@ -2,9 +2,10 @@
 // It relays end-to-end encrypted envelopes between the members of one invite-only network. It never
 // sees message text, room names or who is in which room: only who an envelope is from and to.
 // Membership is proven with certificates that members' apps hold (app/ui/protocol.js), so
-// the server keeps nothing on disk. Members' apps re-upload what it needs when they connect, and
-// a restart only loses envelopes still waiting for offline members. Set DATA_DIR to a Render disk
-// to keep those too.
+// the server keeps nothing on disk. Members' apps re-upload what it needs when they connect.
+// Messages only last while the server is running: a restart drops every queued envelope, and the
+// apps delete their copies when they see the new boot id. Set DATA_DIR to a Render disk to keep the
+// member list across restarts (never the queues).
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -24,13 +25,14 @@ const MAX_RECIPIENTS = 500, MAX_CT = 96000, MAX_DIR = 2000;
 const AUTH_TIMEOUT_MS = 20000;
 
 const ownerOk = P.isB64(OWNER_KEY, P.PUB, P.PUB);
-const members = new Map();      // id -> { cert, info }
-const invitesUsed = new Map();  // invite key -> id of the member who used it
+const members = new Map();      // id -> { cert, info, vouched }
 const certCache = new Map();    // hash of a cert -> verified info
 const online = new Map();       // id -> ws
 const queues = new Map();       // id -> [envelope]
 let removals = { v: 0, ids: [] }, removed = new Set();
 let envSeq = 0;
+// Changes on every start, so apps know queued envelopes were lost and resend what wasn't confirmed
+const BOOT = crypto.randomBytes(8).toString('hex');
 
 const now = () => Date.now();
 const log = (...a) => console.log(new Date().toISOString(), ...a);
@@ -46,26 +48,36 @@ async function checkCert(cert) {
   if (info) { certCache.set(key, info); if (certCache.size > 5000) certCache.delete(certCache.keys().next().value); }
   return info;
 }
-// Adds someone to the directory. Each invite works once and usernames are unique (ignoring case):
-// a second person using an invite, or a newer member taking an existing name, is turned away.
+// Adds someone to the directory. Usernames (ignoring case) and invites belong to whoever had them
+// first: a newer member taking an existing name, or a second person using an invite, is turned away.
+// The join time in a cert is picked by the joiner's app, so it can't decide who was first. After a
+// restart the server only knows who has reconnected, so a holder that no other member's app knows
+// gives way to an established member (one another app uploaded, a `voucher`) with the same name.
 // Returns the member's info, or { why } when they're refused.
-async function admit(cert) {
+async function admit(cert, voucher) {
   const info = await checkCert(cert);
   // The owner key only signs invites and removals (tools/owner.js); it never joins as a member
   if (!info || !info.by || P.isRemoved(info, removed)) return { why: 'member' };
+  const vouched = !!voucher && voucher !== info.id;
   const known = members.get(info.id);
-  if (known) return known.info;
+  if (known) { if (vouched) known.vouched = true; return known.info; }
   const lower = info.name.toLowerCase();
-  for (const x of members.values()) if (x.info.name.toLowerCase() === lower && x.info.at <= info.at) return { why: 'name' };
-  if (info.ik) {
-    const other = invitesUsed.get(info.ik);
-    if (other && other !== info.id) return { why: 'member' };
-    invitesUsed.set(info.ik, info.id);
+  for (const x of [...members.values()]) {
+    const sameInvite = x.info.ik === info.ik;
+    if (!sameInvite && x.info.name.toLowerCase() !== lower) continue;
+    if (x.vouched || !vouched) return { why: sameInvite ? 'member' : 'name' };
+    drop(x.info.id);
   }
-  members.set(info.id, { cert, info });
+  members.set(info.id, { cert, info, vouched });
   broadcast({ t: 'member', cert }, info.id);
   save();
   return info;
+}
+function drop(id) {
+  members.delete(id); queues.delete(id);
+  const ws = online.get(id);
+  if (ws) { online.delete(id); deny(ws, 'That username belongs to someone else in this network.', 'name'); }
+  log(`member ${id.slice(0, 8)} gave way to an established member`);
 }
 async function applyRemovals(r) {
   const ok = await P.checkRemovals(r, OWNER_KEY);
@@ -119,12 +131,16 @@ async function handle(ws, m) {
     if (ws.member) return;
     if (!ownerOk) return deny(ws, 'This server has not been set up yet: it needs its OWNER_KEY.', 'setup');
     if (m.removals) await applyRemovals(m.removals);
+    const self = await checkCert(m.cert);
+    if (!self || !self.by || P.isRemoved(self, removed)) return deny(ws, "This device isn't a member of this network. It may have been removed, or its invite was already used.", 'member');
+    if (!(await P.verify(self.sig, ['pwc-auth', ws.nonce], m.sig))) return deny(ws, "Couldn't confirm this device's identity.", 'auth');
+    // The members this app already knows go in first, so established members keep their names after a restart
+    if (Array.isArray(m.dir)) for (const c of m.dir.slice(0, MAX_DIR)) await admit(c, self.id);
     const info = await admit(m.cert);
     if (info.why === 'name') return deny(ws, 'That username is already taken.', 'name');
     if (info.why) return deny(ws, "This device isn't a member of this network. It may have been removed, or its invite was already used.", 'member');
-    if (!(await P.verify(info.sig, ['pwc-auth', ws.nonce], m.sig))) return deny(ws, "Couldn't confirm this device's identity.", 'auth');
+    if (ws.readyState !== 1) return;
     clearTimeout(ws.authT);
-    if (Array.isArray(m.dir)) for (const c of m.dir.slice(0, MAX_DIR)) await admit(c);
     const old = online.get(info.id);
     if (old && old !== ws) { send(old, { t: 'replaced' }); old.close(4001, 'replaced'); }
     ws.member = info; online.set(info.id, ws);
@@ -163,7 +179,7 @@ function save() {
   saveT = setTimeout(() => {
     saveT = null;
     const file = path.join(DATA_DIR, 'pwc-state.json');
-    const state = { removals, members: [...members.values()].map(x => x.cert), queues: [...queues] };
+    const state = { removals, members: [...members.values()].map(x => x.cert) };
     fs.writeFile(file + '.tmp', JSON.stringify(state), e => {
       if (e) return log('save failed', e.message);
       fs.rename(file + '.tmp', file, e2 => { if (e2) log('save failed', e2.message); });
@@ -175,10 +191,8 @@ async function load() {
   try {
     const state = JSON.parse(fs.readFileSync(path.join(DATA_DIR, 'pwc-state.json'), 'utf8'));
     if (state.removals) await applyRemovals(state.removals);
-    for (const c of state.members || []) await admit(c);
-    const t = now();
-    for (const [id, q] of state.queues || []) if (members.has(id)) queues.set(id, q.filter(e => live(e, t)));
-    log(`loaded ${members.size} members and ${queues.size} queues from disk`);
+    for (const c of state.members || []) await admit(c, 'disk');
+    log(`loaded ${members.size} members from disk`);
   } catch (e) { if (e.code !== 'ENOENT') log('load failed', e.message); }
 }
 
@@ -211,7 +225,7 @@ wss.on('connection', ws => {
     const me = ws.member;
     if (me && online.get(me.id) === ws) { online.delete(me.id); broadcast({ t: 'presence', id: me.id, on: false }); }
   });
-  send(ws, { t: 'hello', v: 1, nonce: ws.nonce, net: ownerOk ? OWNER_KEY : null });
+  send(ws, { t: 'hello', v: 1, boot: BOOT, nonce: ws.nonce, net: ownerOk ? OWNER_KEY : null });
 });
 // Render's proxy drops quiet connections, so ping every 25 seconds
 setInterval(() => {

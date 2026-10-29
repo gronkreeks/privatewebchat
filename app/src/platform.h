@@ -18,6 +18,10 @@ int plat_device_secret(unsigned char out[32], int *created);
 void plat_forget_device_secret(void);
 
 void plat_init(void *window);        // menus and window hooks, once the window exists
+// From now on closing the window only hides it: privatewebchat keeps running (and notifying) in the
+// tray on Windows and the menu bar and Dock on Mac, until Quit. on_hide runs as the window goes.
+// The Mac side is in webview_cef.mm, which owns the window.
+void plat_close_to_tray(void (*on_hide)(void));
 // A panic key that also works while privatewebchat is in the background. code is a KeyboardEvent.code
 // such as "F9" or "Escape"; NULL removes it. Returns 1 if the key was registered.
 int plat_set_hotkey(const char *code, void (*fn)(void));
