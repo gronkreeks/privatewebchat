@@ -25,14 +25,11 @@ const MAX_RECIPIENTS = 500, MAX_CT = 96000, MAX_DIR = 2000;
 const AUTH_TIMEOUT_MS = 20000;
 // Apps from before 1.1.5 can't update themselves and don't say their version. Once a release that
 // updates itself is out (the server asks GitHub every half hour), they're turned away with a message
-// saying where to get it; it shows as a banner across the top of the old app. Until then they're only
-// told about it, in their message box, when they connect and at most every 10 minutes when they send.
+// saying where to get it, which shows as a banner across the top of the old app. Until then they're let in.
 const RELEASES_URL = process.env.RELEASES_URL ?? 'https://api.github.com/repos/gronkreeks/privatewebchat/releases/latest';
 const SELF_UPDATING = [1, 1, 5];
 let latest = null;   // the newest release's version, once it updates itself
-const OUTDATED = 'A new version of privatewebchat is out. Download it from github.com/gronkreeks/privatewebchat/releases/latest. After that, privatewebchat updates itself whenever it opens.';
-const OUTDATED_EVERY = 10 * 60000;
-const tooOld = name => `privatewebchat ${latest} is out and this version no longer works. Download it from github.com/gronkreeks/privatewebchat/releases/latest and open it. You'll still be ${name}, with the same PIN and friends, so you don't need an invite code. After this it updates itself.`;
+const tooOld = name => `privatewebchat 1.1.4 and older won't work anymore unless you download the new version (${latest}). Get it from github.com/gronkreeks/privatewebchat/releases/latest and open it. You'll still be ${name}, with the same PIN and friends, so you don't need an invite code. After this it updates itself.`;
 async function checkLatest() {
   if (!RELEASES_URL) return;
   try {
@@ -165,13 +162,11 @@ async function handle(ws, m) {
     const old = online.get(info.id);
     if (old && old !== ws) { send(old, { t: 'replaced' }); old.close(4001, 'replaced'); }
     ws.member = info; online.set(info.id, ws);
-    ws.version = typeof m.v === 'string' ? m.v.slice(0, 20) : null;
     send(ws, {
       t: 'welcome', id: info.id, dir: [...members.values()].map(x => x.cert),
       removals: removals.v ? removals : null, online: [...online.keys()],
     });
     broadcast({ t: 'presence', id: info.id, on: true }, info.id);
-    outdated(ws);
     const t0 = now();
     for (const env of queues.get(info.id) || []) if (live(env, t0)) send(ws, env);
     return;
@@ -188,17 +183,10 @@ async function handle(ws, m) {
       for (const id of to) deliver(id, { t: 'env', eid: (++envSeq).toString(36) + '.' + crypto.randomBytes(3).toString('hex'), from: me.id, iv: m.iv, ct: m.ct, key: m.keys[id], at: t, exp: t + ttl });
       send(ws, { t: 'sent', ref: m.ref, at: t, n: to.length });
       if (to.length) save();
-      outdated(ws);
       break;
     }
     case 'ack': ack(me.id, m.eids); break;
   }
-}
-function outdated(ws) {
-  const t = now();
-  if (ws.version || latest || t - (ws.toldOutdated || 0) < OUTDATED_EVERY) return;
-  ws.toldOutdated = t;
-  send(ws, { t: 'error', msg: OUTDATED });
 }
 function deny(ws, msg, why) { send(ws, { t: 'denied', msg, why }); ws.close(4000, why); }
 

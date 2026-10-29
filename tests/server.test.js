@@ -130,16 +130,6 @@ const last = c => c.got.pop();
   assert.strictEqual(last(await client(carol, cc)).t, 'welcome');
   assert.strictEqual(last(await client(mal, await certAt(mal, 'Carol', 1))).why, 'name', 'backdated cert cannot take a name');
 
-  // Apps too old to update themselves (they don't send a version) are told to download the new one
-  const old = await client(carol, cc, { v: null });
-  assert((await old.next('error')).msg.includes('releases/latest'), 'an old app is told to update');
-  old.send({ t: 'send', ref: 'r1', iv: 'A'.repeat(16), ct: 'A'.repeat(24), keys: {} });
-  await old.next('sent'); await sleep(200);
-  assert(!old.got.some(m => m.t === 'error'), 'not again straight away');
-  const fresh = await client(carol, cc);
-  await sleep(300);
-  assert(!fresh.got.some(m => m.t === 'error'), 'an up-to-date app is not told');
-
   // After a restart, whoever grabs a name first gives way once another member's app vouches for the real holder
   srv.kill(); await sleep(300);
   await startServer(ok.sigPub);
@@ -150,8 +140,8 @@ const last = c => c.got.pop();
   assert.strictEqual((await mc.next('denied')).why, 'name', 'name grabber dropped');
   assert.strictEqual(last(await client(carol, cc)).t, 'welcome', 'real holder gets her name back');
 
-  // Once a release that updates itself is out, apps too old to update are turned away and told how to get
-  // it; until then they're only told. Apps that say their version are let in either way.
+  // Once a release that updates itself is out, apps too old to update (they don't send a version) are
+  // turned away and told how to get it; until then they're let in. Apps that say their version always are.
   await new Promise(r => releases.listen(0, '127.0.0.1', r));
   const relUrl = `http://127.0.0.1:${releases.address().port}/latest`;
   srv.kill(); await sleep(300);
@@ -162,7 +152,7 @@ const last = c => c.got.pop();
   await startServer(ok.sigPub, relUrl); await sleep(400);
   const denied = last(await client(bob, bc, { v: null, dir: [bc, cc], removals: rem }));
   assert.strictEqual(denied.why, 'outdated', 'old app turned away once 1.1.5 is out');
-  assert(denied.msg.includes('1.1.5') && denied.msg.includes("You'll still be bob") && denied.msg.includes('releases/latest'), 'and told where to get it, as who');
+  assert(denied.msg.includes("1.1.4 and older won't work anymore unless you download the new version (1.1.5)") && denied.msg.includes("You'll still be bob") && denied.msg.includes('releases/latest'), 'and told where to get it, as who');
   assert.strictEqual(last(await client(bob, bc)).t, 'welcome', 'a new app is let in');
   releases.close();
 
