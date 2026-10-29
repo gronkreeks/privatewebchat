@@ -229,6 +229,9 @@ kbd { display: inline-block; font-family: var(--mono); font-size: 0.7rem; font-w
 #blackPin { position: absolute; opacity: 0; width: 1px; height: 1px; left: -10px; top: -10px; }
 #blackDots { position: absolute; left: 0; right: 0; bottom: 18%; text-align: center; color: #1c1c1c; font-size: 1.4rem; letter-spacing: 0.5rem; user-select: none; }
 #blackDots.shake { animation: shake 0.3s; }
+#blackAsk { display: none; position: absolute; left: 0; right: 0; bottom: calc(18% + 3rem); text-align: center; color: #8a8a8a; font-family: var(--mono); font-size: 0.9rem; user-select: none; }
+#black.ask #blackAsk { display: block; }
+#black.ask #blackDots { color: #ededed; }
 @keyframes shake { 25% { transform: translateX(-8px); } 75% { transform: translateX(8px); } }
 
 /* ── Friends, inbox and avatars ── */

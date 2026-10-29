@@ -27,7 +27,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 - **Group chats** with any of your friends
 - **Desktop notifications** for DMs, groups and friend requests, even with the window closed: privatewebchat keeps running in the system tray (Windows) or the menu bar and Dock (Mac) until you choose Quit
 - **A PIN lock** every time you open the app
-- **A black-out key** that instantly turns the window black, until you press it again or type your PIN
+- **A black-out key** that instantly turns the window black, until you type your PIN
 - **A wipe PIN** that erases everything on your computer
 - **Messages that only last while the server is running**: if the server goes offline, every message is deleted from everyone's computer
 

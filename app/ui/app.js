@@ -1015,7 +1015,7 @@
       themePicker(),
 
       h('h3', { text: 'Black-out key' }),
-      h('p', { class: 'hint' }, 'Press it and privatewebchat instantly goes completely black. To come back, press the same key again, or type your PIN on the black screen and press Enter. Nothing shows while you type.'),
+      h('p', { class: 'hint' }, 'Press it and privatewebchat instantly goes completely black. To come back, type your PIN on the black screen and press Enter, or press the key again to see a PIN prompt.'),
       h('div', { class: 'row', style: 'margin-top:0' }, h('span', {}, 'Key: '), kbd, change),
       h('label', { class: 'check' }, global, h('span', {}, 'Also works when privatewebchat is in the background', h('small', { class: 'hint', style: 'display:block;margin:0' }, "privatewebchat takes the key over in every app, so pick one you don't use, like F9."))),
       keyNote,
@@ -1104,6 +1104,7 @@
     $('app').classList.add('hidden');
     $('black').classList.remove('hidden');
     $('blackPin').value = ''; dots();
+    $('black').classList.remove('ask');
     native.title('privatewebchat');
     setTimeout(() => $('blackPin').focus(), 0);
   }
@@ -1116,14 +1117,15 @@
     if (S.view !== 'friends') $('msg').focus();
   }
   const dots = () => { $('blackDots').textContent = '•'.repeat($('blackPin').value.length); };
-  // The black-out key turns it off again too, but not after the window was closed to the tray:
-  // that still takes the PIN
+  // Pressing the black-out key again on the black screen asks for the PIN; only the PIN brings it back
   let lastToggle = 0;
   function toggleBlack() {
     if (Date.now() - lastToggle < 300) return;   // the page and the background key can both see one press
     lastToggle = Date.now();
-    if (!S.black) blackout();
-    else if (!S.away) unblack();
+    if (!S.black) return blackout();
+    $('blackPin').value = ''; dots();
+    $('black').classList.add('ask');
+    $('blackPin').focus();
   }
   window.PwcPanic = toggleBlack;
   // Closing the window keeps privatewebchat running in the background: it comes back blacked out, so

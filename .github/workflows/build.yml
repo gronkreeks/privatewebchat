@@ -21,8 +21,14 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - run: app\build-windows.bat
         shell: cmd
+      - run: Compress-Archive -Path app/dist/privatewebchat.exe -DestinationPath app/dist/privatewebchat-windows.zip
+        shell: pwsh
       - uses: actions/upload-artifact@v4
-        with: { name: privatewebchat-windows, path: app/dist/privatewebchat.exe }
+        with:
+          name: privatewebchat-windows
+          path: |
+            app/dist/privatewebchat.exe
+            app/dist/privatewebchat-windows.zip
   tests:
     runs-on: macos-14
     steps:

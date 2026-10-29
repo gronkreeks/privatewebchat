@@ -343,17 +343,21 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.fill('#blackPin', '1234');
   await maya.js(`$('blackPin').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
   await maya.until(`$('black').classList.contains('hidden') && !$('sMain').classList.contains('hidden')`, 'back from black-out');
-  // The same key turns it off again; Tab never blacks out
+  // Pressing the key again asks for the PIN but doesn't unlock; Tab never blacks out
   await sleep(400);
   await maya.key('Escape', 'Escape', 27);
   await maya.until(`!$('black').classList.contains('hidden')`, 'black-out again');
   await sleep(400);
   await maya.key('Escape', 'Escape', 27);
-  await maya.until(`$('black').classList.contains('hidden') && !$('sMain').classList.contains('hidden')`, 'back with the same key');
+  await maya.until(`$('black').classList.contains('ask')`, 'PIN prompt');
+  assert(await maya.js(`return !$('black').classList.contains('hidden') && $('app').classList.contains('hidden')`), 'the key alone keeps it black');
+  await maya.fill('#blackPin', '1234');
+  await maya.js(`$('blackPin').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+  await maya.until(`$('black').classList.contains('hidden') && !$('sMain').classList.contains('hidden')`, 'back after the PIN prompt');
   await maya.key('Tab', 'Tab', 9);
   await sleep(300);
   assert(await maya.js(`return $('black').classList.contains('hidden')`), 'Tab does not black out');
-  console.log('✓ black-out key hides everything; the PIN or the same key brings it back');
+  console.log('✓ black-out key hides everything; pressing it again asks for the PIN, only the PIN brings it back');
 
   // ── PIN on launch ──
   await maya.reload();
