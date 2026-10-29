@@ -1,0 +1,33 @@
+// What Hush needs from the operating system. platform_mac.c and platform_win.c implement it.
+#ifndef HUSH_PLATFORM_H
+#define HUSH_PLATFORM_H
+#include <stddef.h>
+
+// Files live in Hush's own folder: ~/Library/Application Support/Hush or %APPDATA%\Hush.
+// plat_read returns a malloc'd, NUL-terminated copy, or NULL if the file doesn't exist.
+char *plat_read(const char *name, size_t *len);
+int plat_write(const char *name, const char *data, size_t len);   // replaces the file atomically, 0 on success
+void plat_remove(const char *name);
+
+void plat_random(void *buf, size_t n);
+long long plat_now_ms(void);
+
+// 32 random bytes that never leave this computer: kept in the Keychain on Mac and protected
+// with DPAPI on Windows. *created is set when they were just made. Returns 0 on success.
+int plat_device_secret(unsigned char out[32], int *created);
+void plat_forget_device_secret(void);
+
+void plat_init(void *window);        // menus and window hooks, once the window exists
+// A panic key that also works while Hush is in the background. code is a KeyboardEvent.code
+// such as "F9" or "Escape"; NULL removes it. Returns 1 if the key was registered.
+int plat_set_hotkey(const char *code, void (*fn)(void));
+void plat_attention(void);           // bounce the Dock icon / flash the taskbar button
+// Desktop notifications: Notification Center on Mac, a tray notification on Windows.
+// plat_notify_setup asks for permission the first time (Mac).
+void plat_notify_setup(void);
+void plat_notify(const char *title, const char *body);
+void plat_shutdown(void);            // tidy up (the tray icon) before quitting
+void plat_copy(const char *text);
+void plat_fatal(const char *msg);
+
+#endif

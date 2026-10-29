@@ -1,0 +1,12 @@
+# Render blueprint for the Hush relay. Render serves it on port 443 at wss://<name>.onrender.com.
+services:
+  - type: web
+    name: hush-server
+    runtime: node
+    plan: free
+    buildCommand: cd server && npm ci
+    startCommand: node server/index.js
+    healthCheckPath: /health
+    envVars:
+      - key: OWNER_KEY
+        sync: false

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src wss: ws://localhost:* ws://127.0.0.1:*; base-uri 'none'; form-action 'none'">
+  <title>Hush</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- First run -->
+    <section id="sWelcome" class="screen hidden">
+      <div class="card narrow">
+        <div class="brand"><span class="logo"></span>Hush</div>
+        <p class="lead">Private, end-to-end encrypted chat. Invite only.</p>
+        <div class="choices">
+          <button class="choice" id="goJoin"><b>I have an invite</b><span>Paste the invite code someone sent you</span></button>
+          <button class="choice" id="goCreate"><b>Start a new network</b><span>You run the server and invite everyone else</span></button>
+        </div>
+      </div>
+    </section>
+
+    <section id="sJoin" class="screen hidden">
+      <div class="card narrow">
+        <h1>Join with an invite</h1>
+        <label class="lbl" for="joinCode">Invite code</label>
+        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="HUSH1.…"></textarea>
+        <p class="hint" id="joinFrom"></p>
+        <label class="lbl" for="joinName">Username</label>
+        <input id="joinName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. sam_k">
+        <p class="hint small">Letters, numbers, _ and . only. <b>You can't change it later.</b></p>
+        <div class="err" id="joinErr"></div>
+        <div class="row end"><button class="link" data-back>Back</button><button class="btn" id="joinNext">Continue</button></div>
+      </div>
+    </section>
+
+    <section id="sCreate" class="screen hidden">
+      <div class="card narrow">
+        <h1>Start a new network</h1>
+        <p class="hint">Deploy the Hush server on Render first (see the README), then enter its address. Render serves it over port 443.</p>
+        <label class="lbl" for="createServer">Server address</label>
+        <input id="createServer" class="in" autocomplete="off" spellcheck="false" placeholder="your-hush.onrender.com">
+        <label class="lbl" for="createName">Username</label>
+        <input id="createName" class="in" maxlength="24" autocomplete="off" spellcheck="false" placeholder="e.g. maya">
+        <p class="hint small">Letters, numbers, _ and . only. <b>You can't change it later.</b></p>
+        <div class="err" id="createErr"></div>
+        <div class="row end"><button class="link" data-back>Back</button><button class="btn" id="createNext">Continue</button></div>
+      </div>
+    </section>
+
+    <section id="sSetPin" class="screen hidden">
+      <div class="card narrow">
+        <h1>Choose a PIN</h1>
+        <p class="hint">You'll enter it every time you open Hush. It also encrypts everything Hush stores on this computer, so it can't be reset: if you forget it, you'll need a new invite.</p>
+        <label class="lbl" for="newPin">PIN (4 to 12 digits)</label>
+        <input id="newPin" class="in pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off">
+        <label class="lbl" for="newPin2">Type it again</label>
+        <input id="newPin2" class="in pin" type="password" inputmode="numeric" maxlength="12" autocomplete="off">
+        <div class="err" id="setPinErr"></div>
+        <div class="row end"><button class="link" id="setPinBack">Back</button><button class="btn" id="setPinGo">Set PIN</button></div>
+      </div>
+    </section>
+
+    <!-- Every launch -->
+    <section id="sUnlock" class="screen hidden">
+      <div class="card tiny">
+        <div class="brand small"><span class="logo"></span>Hush</div>
+        <label class="lbl" for="unlockPin">Enter your PIN</label>
+        <input id="unlockPin" class="in pin big" type="password" inputmode="numeric" maxlength="12" autocomplete="off">
+        <div class="err" id="unlockErr"></div>
+        <button class="btn wide" id="unlockGo">Unlock</button>
+      </div>
+    </section>
+
+    <section id="sGone" class="screen hidden">
+      <div class="card narrow">
+        <h1 id="goneTitle"></h1>
+        <p class="hint" id="goneMsg"></p>
+        <div class="row end"><button class="btn danger" id="goneErase">Erase this device</button></div>
+      </div>
+    </section>
+
+    <!-- Signed in -->
+    <section id="sMain" class="main hidden">
+      <aside class="side">
+        <div class="side-top">
+          <div class="brand small"><span class="logo"></span>Hush</div>
+          <span class="dot" id="netDot" title="Offline"></span>
+        </div>
+        <div class="side-scroll">
+          <button class="item big" id="navFriends"><span class="ico">👥</span><span class="nm">Friends</span><span class="badge hidden" id="friendsBadge"></span></button>
+          <button class="item big" id="navGeneral"><span class="ico hash">#</span><span class="nm">General</span><span class="badge hidden" id="generalBadge"></span></button>
+          <div class="side-h"><span>Messages</span><button class="icon" id="newGroup" title="New group chat">+</button></div>
+          <div id="inbox"></div>
+        </div>
+        <div class="side-bottom">
+          <button class="btn wide" id="inviteBtn">Invite someone</button>
+          <div class="me-row">
+            <span class="mebox" id="meBox"></span>
+            <button class="icon" id="settingsBtn" title="Settings">⚙</button>
+          </div>
+          <button class="panic-btn" id="panicBtn" title="Black out the screen">Black out <kbd id="panicKbd"></kbd></button>
+        </div>
+      </aside>
+      <div class="right">
+        <div class="banner hidden" id="banner"></div>
+
+        <div class="pane" id="friendsPane">
+          <header class="chat-h">
+            <div class="tabs">
+              <h2>Friends</h2>
+              <button class="tab" data-tab="online">Online</button>
+              <button class="tab" data-tab="all">All</button>
+              <button class="tab" data-tab="pending">Pending <span class="badge hidden" id="pendingBadge"></span></button>
+              <button class="tab" data-tab="blocked">Blocked</button>
+              <button class="tab add" data-tab="add">Add friend</button>
+            </div>
+          </header>
+          <div class="fbody" id="friendsBody"></div>
+        </div>
+
+        <div class="pane hidden" id="chatPane">
+          <header class="chat-h">
+            <div class="title-row">
+              <span id="roomAv"></span>
+              <div>
+                <h2 id="roomTitle"></h2>
+                <div class="sub"><span class="lock">End-to-end encrypted</span><span id="roomSub"></span></div>
+              </div>
+            </div>
+            <button class="link" id="roomAction"></button>
+          </header>
+          <div class="log" id="log"></div>
+          <div class="composer">
+            <textarea id="msg" rows="1" placeholder="Message" maxlength="2000"></textarea>
+            <span class="left" id="msgLeft"></span>
+            <button class="btn" id="sendBtn">Send</button>
+          </div>
+          <div class="err pad" id="chatErr"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div id="modal" class="modal hidden"><div class="card modal-card" id="modalCard" role="dialog" aria-modal="true"></div></div>
+
+  <!-- Black-out screen: nothing on it. Type your PIN and press Enter to come back. -->
+  <div id="black" class="hidden">
+    <input id="blackPin" type="password" inputmode="numeric" maxlength="12" autocomplete="off" aria-label="PIN">
+    <div id="blackDots"></div>
+  </div>
+
+  <script src="protocol.js"></script>
+  <script src="vault.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

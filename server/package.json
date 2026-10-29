@@ -1,0 +1,16 @@
+{
+  "name": "hush-server",
+  "version": "1.0.0",
+  "description": "Relay server for Hush, an invite-only end-to-end encrypted chat app",
+  "main": "index.js",
+  "private": true,
+  "scripts": {
+    "start": "node index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "ws": "8.18.0"
+  }
+}
