@@ -290,8 +290,8 @@
   // Looking it up can mean waking the server, which takes up to a minute.
   function lookupSpoken(code, onSlow) {
     return new Promise(res => {
-      let ws = null, done = false, owner = null;
-      const finish = r => { if (done) return; done = true; clearTimeout(slow); clearTimeout(give); try { ws.close(); } catch (e) { } res(r); };
+      let ws = null, done = false, owner = null, quiet = null;
+      const finish = r => { if (done) return; done = true; clearTimeout(slow); clearTimeout(give); clearTimeout(quiet); try { ws.close(); } catch (e) { } res(r); };
       const slow = setTimeout(onSlow, 3000);
       const give = setTimeout(() => finish({ err: "Couldn't reach the server. Check your internet connection, then try again." }), 90000);
       try { fetch(PwcConfig.SERVER.replace(/^ws/, 'http') + '/health', { mode: 'no-cors', cache: 'no-store' }).catch(() => { }); } catch (e) { }
@@ -303,7 +303,10 @@
           owner = m.net;
           if (!owner || (PwcConfig.OWNER_CERT && owner !== PwcConfig.OWNER_CERT.m.sig)) return finish({ err: "The server isn't set up for this network yet." });
           ws.send(JSON.stringify({ t: 'spoken_get' }));
+          // A server from before spoken codes never answers
+          quiet = setTimeout(() => finish({ err: "The server can't check spoken codes yet. Ask for an invite code to paste instead." }), 15000);
         } else if (m.t === 'spoken_list') {
+          clearTimeout(quiet);
           const entries = [];
           for (const x of Array.isArray(m.entries) ? m.entries.slice(0, 500) : []) { const ok = await P.checkSpoken(x, owner); if (ok && ok.exp > Date.now()) entries.push(ok); }
           const inner = entries.length ? await P.openSpoken(code, owner, entries) : null;
