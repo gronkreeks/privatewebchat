@@ -46,7 +46,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
    | **Windows 10 / 11** | [`privatewebchat.exe`](../../releases/latest/download/privatewebchat.exe) |
    | **Mac (Apple Silicon, macOS 12+)** | [`privatewebchat.dmg`](../../releases/latest/download/privatewebchat.dmg) |
 
-   Intel Macs aren't supported.
+   You can also download both from [unblockedarcade.org](https://unblockedarcade.org) (the EduArcade site). Intel Macs aren't supported.
 2. Open it. On Mac, open the .dmg and drag privatewebchat into Applications. The first time, your computer will warn that the app isn't from an identified developer:
    - **Mac:** right-click the app → **Open** → **Open**. If there's no Open button, go to **System Settings → Privacy & Security** and click **Open Anyway**
    - **Windows:** **More info** → **Run anyway**
@@ -67,7 +67,7 @@ Every time privatewebchat opens, it checks this repository's [Releases](../../re
 
 Versions 1.1.4 and older can't update themselves, and no longer work once 1.1.5 is out: they show a banner saying where to download the new version. Install it once by hand (you keep your username, PIN and friends, so no invite code is needed) and it takes care of itself after that.
 
-**Publishing an update** (developer): bump the version in `app/ui/config.js`, `app/mac/Info.plist`, `app/win/app.rc` and `app/build-mac.sh` (`node tests/version.test.js` checks they match), write the patch notes in `docs/releases/vX.Y.Z.md`, then push a tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The patch notes are shown while the app updates, and posted in everyone's Announcements.
+**Publishing an update** (developer): bump the version in `app/ui/config.js`, `app/mac/Info.plist`, `app/win/app.rc` and `app/build-mac.sh` (`node tests/version.test.js` checks they match), write the patch notes in `docs/releases/vX.Y.Z.md`, then push a tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The patch notes are shown while the app updates, and posted in everyone's Announcements. To put a release on the EduArcade site too: `sh tools/site-downloads.sh ~/unblockedarcade`, then commit and push the site (the apps update themselves, so the site's copy only needs refreshing now and then).
 
 ## End-to-end encryption
 

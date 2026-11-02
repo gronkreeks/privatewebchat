@@ -127,6 +127,7 @@ class App : public CefApp, public CefBrowserProcessHandler {
     cl->AppendSwitch("use-mock-keychain");          // Chromium's own Keychain item isn't needed: nothing is stored
     cl->AppendSwitch("no-default-browser-check");   // it isn't a web browser
     cl->AppendSwitch("no-first-run");
+    cl->AppendSwitch("disable-software-rasterizer");   // SwiftShader isn't shipped (build-mac.sh)
     cl->AppendSwitch("disable-background-networking");
     cl->AppendSwitch("disable-component-update");
     // Keeps the page connected and notifying at full speed while the window is closed to the menu bar
@@ -249,7 +250,13 @@ webview_t webview_create(int dbg, void *wnd) {
   s.background_color = 0xFF000000;
   s.remote_debugging_port = debug ? 9222 : 0;
   // Nothing is kept here: the page itself runs with no cache path, so Chromium keeps nothing on disk
+  // Test builds get their own folder: Chromium lets one copy run per folder and hands any other launch
+  // over to it, so a test would otherwise end up in the copy that's already open
+#ifdef PWC_SELFTEST
+  NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/privatewebchat-selftest/chromium"];
+#else
   NSString *root = [NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/privatewebchat/chromium"];
+#endif
   CefString(&s.root_cache_path) = root.UTF8String;
   if (!CefInitialize(args, s, new App(), nullptr)) return NULL;
   client = new Client();

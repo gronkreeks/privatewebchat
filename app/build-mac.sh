@@ -25,8 +25,8 @@ helper_plist() {
   <key>CFBundleExecutable</key><string>$1</string>
   <key>CFBundleIdentifier</key><string>app.privatewebchat.desktop.helper$2</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>1.1.7</string>
-  <key>CFBundleVersion</key><string>4</string>
+  <key>CFBundleShortVersionString</key><string>1.1.8</string>
+  <key>CFBundleVersion</key><string>5</string>
   <key>LSMinimumSystemVersion</key><string>12.0</string>
   <key>LSUIElement</key><true/>
   <key>NSSupportsAutomaticGraphicsSwitching</key><true/>
@@ -76,6 +76,14 @@ cp icons/icon.icns "$APP/Contents/Resources/icon.icns"
 cp mac/Info.plist "$APP/Contents/"
 cp "$B/$NAME" "$APP/Contents/MacOS/$NAME"
 ditto "$V/Release/Chromium Embedded Framework.framework" "$APP/Contents/Frameworks/Chromium Embedded Framework.framework"
+# Chromium's own text in every language isn't needed (privatewebchat is in English), and leaving it out
+# keeps the disk image under the 100 MB a file can be on GitHub Pages (the EduArcade site's downloads).
+# Chromium falls back to English when there's no pack for the computer's language.
+find "$APP/Contents/Frameworks/Chromium Embedded Framework.framework/Resources" -maxdepth 1 -name '*.lproj' \
+  ! -name 'en.lproj' ! -name 'en_GB.lproj' -exec rm -rf {} +
+# Nor SwiftShader, Chromium's software stand-in for a graphics card (loaded only when there isn't one;
+# webview_cef.mm tells Chromium not to look for it)
+rm -f "$APP/Contents/Frameworks/Chromium Embedded Framework.framework/Libraries/"{libvk_swiftshader.dylib,libvulkan.dylib,vk_swiftshader_icd.json}
 for H in ":" "GPU:.gpu" "Renderer:.renderer" "Plugin:.plugin" "Alerts:.alerts"; do
   KIND=${H%%:*}; SUFFIX=${H#*:}
   HN="$NAME Helper"; [ -n "$KIND" ] && HN="$HN ($KIND)"
@@ -93,7 +101,8 @@ if [ -z "$PWC_SELFTEST" ]; then
   mkdir -p build/dmg
   ditto "$APP" "build/dmg/$NAME.app"
   ln -s /Applications build/dmg/Applications
-  hdiutil create -quiet -volname "$NAME" -srcfolder build/dmg -fs HFS+ -format UDZO "dist/$NAME.dmg"
+  # LZMA (ULMO): a third smaller than the usual zlib; opens on macOS 10.15 and newer
+  hdiutil create -quiet -volname "$NAME" -srcfolder build/dmg -fs HFS+ -format ULMO "dist/$NAME.dmg"
   rm -rf build/dmg
   ls -lh "dist/$NAME.dmg"
 fi
