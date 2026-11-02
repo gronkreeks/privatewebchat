@@ -50,6 +50,8 @@ const queues = new Map();       // id -> [envelope]
 let removals = { v: 0, ids: [] }, removed = new Set();
 const anns = new Map();         // id -> owner-signed announcement (newest version of each)
 const MAX_ANNS = 100;
+const spokens = new Map();      // id -> owner-signed, encrypted invite behind a spoken code
+const MAX_SPOKEN = 200;
 let envSeq = 0;
 // Changes on every start, so apps know queued envelopes were lost and resend what wasn't confirmed
 const BOOT = crypto.randomBytes(8).toString('hex');
@@ -130,6 +132,24 @@ async function announce(list) {
   for (const a of list.slice(0, MAX_ANNS)) if (await mergeAnn(a)) broadcast({ t: 'ann', ann: anns.get(a.id) });
 }
 
+// Spoken invite codes (protocol.js): the encrypted invites they stand for, from the owner, or back
+// from members' apps after a restart. Anyone can ask for all of them: only the 12 digits open one.
+async function putSpoken(list) {
+  if (!ownerOk || !Array.isArray(list)) return 0;
+  let added = 0;
+  for (const e of list.slice(0, MAX_SPOKEN)) {
+    if (!e || typeof e !== 'object' || spokens.has(e.id) || !(e.exp > now())) continue;
+    const ok = await P.checkSpoken(e, OWNER_KEY);
+    if (!ok) continue;
+    spokens.set(ok.id, ok); added++;
+    broadcast({ t: 'spoken', entry: ok });
+  }
+  for (const [id, e] of spokens) if (e.exp <= now()) spokens.delete(id);
+  while (spokens.size > MAX_SPOKEN) spokens.delete([...spokens.values()].sort((a, b) => a.exp - b.exp)[0].id);
+  return added;
+}
+const liveSpoken = () => [...spokens.values()].filter(e => e.exp > now());
+
 // ──────────── Envelopes ────────────
 function deliver(id, env) {
   let q = queues.get(id);
@@ -160,6 +180,13 @@ async function handle(ws, m) {
   // Owner requests (tools/owner.js) are signed with the owner key, so they need no login
   if (m.t === 'removals') return applyRemovals(m.removals);
   if (m.t === 'announce') return announce([m.ann]);
+  if (m.t === 'spoken_put') { const n = await putSpoken(m.entries); return send(ws, { t: 'spoken_put', n, online: online.size }); }
+  // Someone joining with a spoken code. `online` lets their app say so when nobody is around to have
+  // handed the codes back after a restart.
+  if (m.t === 'spoken_get') {
+    if (limited(ws.rate, now())) return;
+    return send(ws, { t: 'spoken_list', entries: liveSpoken(), online: online.size });
+  }
   if (m.t === 'owner') {
     if (!ownerOk || !(await P.verify(OWNER_KEY, ['pwc-owner', ws.nonce], m.sig))) return send(ws, { t: 'denied', msg: 'Not the owner', why: 'owner' });
     return send(ws, { t: 'owner_dir', dir: [...members.values()].map(x => x.cert), removals: removals.v ? removals : null, online: [...online.keys()] });
@@ -169,6 +196,7 @@ async function handle(ws, m) {
     if (!ownerOk) return deny(ws, 'This server has not been set up yet: it needs its OWNER_KEY.', 'setup');
     if (m.removals) await applyRemovals(m.removals);
     if (m.ann) await announce(m.ann);
+    if (m.spoken) await putSpoken(m.spoken);
     const self = await checkCert(m.cert);
     if (!self || !self.by || P.isRemoved(self, removed)) return deny(ws, "This device isn't a member of this network. It may have been removed, or its invite was already used.", 'member');
     if (!(await P.verify(self.sig, ['pwc-auth', ws.nonce], m.sig))) return deny(ws, "Couldn't confirm this device's identity.", 'auth');
@@ -185,7 +213,7 @@ async function handle(ws, m) {
     ws.member = info; online.set(info.id, ws);
     send(ws, {
       t: 'welcome', id: info.id, dir: [...members.values()].map(x => x.cert),
-      removals: removals.v ? removals : null, online: [...online.keys()], ann: [...anns.values()],
+      removals: removals.v ? removals : null, online: [...online.keys()], ann: [...anns.values()], spoken: liveSpoken(),
     });
     broadcast({ t: 'presence', id: info.id, on: true }, info.id);
     const t0 = now();

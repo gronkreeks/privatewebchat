@@ -358,3 +358,6 @@ pre.gif { font-family: var(--mono); font-size: 0.78rem; line-height: 1.2; color:
 .log .ann .notes { max-height: none; overflow: visible; margin-top: 0.2rem; }
 .log .ann .notes h3:first-child { margin-top: 0.5rem; }
 .ann-locked { padding: 0.8rem 1.1rem; border-top: 1px solid var(--line); color: var(--faint); font-size: 0.8rem; font-weight: 600; text-align: center; }
+
+/* A spoken invite code, big enough to read out */
+.box.big-code { margin-top: 0.7rem; font-size: 1.5rem; letter-spacing: 3px; text-align: center; color: var(--text); }

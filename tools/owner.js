@@ -9,6 +9,9 @@
 //   node tools/owner.js cert                  print OWNER_CERT, for app/ui/config.js
 //   node tools/owner.js invite [count] [days] print invite codes (default 1 code, valid 90 days;
 //                                             add --long or --short to pick the kind)
+//   node tools/owner.js spoken [count] [days] print codes short enough to say out loud: 12 digits that
+//                                             stand for an invite code (default 1, valid 7 days)
+//   node tools/owner.js spoken <code>         make a spoken code for an invite code you already have
 //   node tools/owner.js members               list everyone on the server
 //   node tools/owner.js remove <username>     remove someone from the server
 //   node tools/owner.js announce <file|text>  post in Announcements (Markdown: # headings, - bullets)
@@ -32,15 +35,16 @@ function load() {
 // privatewebchat 1.1.6 and newer can read them. So they're printed once the newest release is at least
 // 1.1.6; until then, or when GitHub can't be reached, it's the long kind (PWC1.), which every version reads.
 const knowsCert = owner => { const c = require('../app/ui/config.js').OWNER_CERT; return !!c && P.canon(c) === P.canon(owner.cert); };
-const SHORT_FROM = [1, 1, 6];
-async function shortReleased() {
+// Whether the newest release is at least version v ([1, 1, 6]); false when GitHub can't be reached
+async function released(v) {
   try {
     const r = await fetch(require('../app/ui/config.js').UPDATES + '/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'privatewebchat-owner' }, signal: AbortSignal.timeout(8000) });
     const m = r.ok && /^v(\d+)\.(\d+)\.(\d+)$/.exec((await r.json()).tag_name);
-    const d = m && m.slice(1).map(Number).map((x, i) => x - SHORT_FROM[i]).find(x => x);
+    const d = m && m.slice(1).map(Number).map((x, i) => x - v[i]).find(x => x);
     return !!m && (d || 0) >= 0;
   } catch (e) { return false; }
 }
+const shortReleased = () => released([1, 1, 6]);
 const encodeInvite = inv => 'PWC1.' + Buffer.from(JSON.stringify(inv)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 // Opens a connection, proves we hold the owner key, and returns the member list and removals
@@ -100,6 +104,36 @@ async function members(owner, session) {
     if (!canShort) console.error("These are long codes because app/ui/config.js doesn't have this owner's certificate yet (node tools/owner.js cert).");
     else if (!short && !flags.includes('--long')) console.error("These are the long kind (PWC1.) because the newest privatewebchat release is older than 1.1.6, which can't read short codes.\nOnce 1.1.6 is released, this prints short ones (PWC2.).");
     else if (short) console.error('Short codes (PWC2.) need privatewebchat 1.1.6 or newer. If the app says codes start with PWC1., it will update itself the next time it opens, or use --long.');
+  } else if (cmd === 'spoken') {
+    // The invite codes these stand for are encrypted with the 12 digits and kept by the server (and by
+    // members' apps, which give them back after a restart), so they need the server to be reachable
+    const owner = load();
+    const given = args.find(a => /^PWC[12]\./.test(a.replace(/\s+/g, '')));
+    const nums = args.filter(a => a !== given && !a.startsWith('--'));
+    const count = given ? 1 : Math.max(1, Math.min(20, parseInt(nums[0] || '1', 10) || 1));
+    const days = Math.max(1, Math.min(30, parseFloat(nums[given ? 0 : 1] || '7') || 7));
+    if (!(await released([1, 1, 7]))) console.error("Heads up: spoken codes need privatewebchat 1.1.7 or newer, which isn't released yet. Older versions can't use them.\n");
+    const s = await ownerSession(owner);
+    const replies = [];
+    s.ws.onmessage = e => { const m = JSON.parse(e.data); if (m.t === 'spoken_put') replies.shift()?.(m); };
+    const put = entry => new Promise((res, rej) => {
+      const t = setTimeout(() => rej(new Error("The server didn't answer. It may be running an older version: redeploy it on Render, then try again.")), 15000);
+      replies.push(m => { clearTimeout(t); res(m); });
+      s.ws.send(JSON.stringify({ t: 'spoken_put', entries: [entry] }));
+    });
+    let online = 0;
+    for (let i = 0; i < count; i++) {
+      const inner = given ? given.replace(/\s+/g, '') : knowsCert(owner) ? await P.makeShortInvite(owner.keys.sigPriv, days * 24)
+        : await P.makeInvite(owner.cert, owner.keys, days * 24).then(inv => encodeInvite({ g: inv.g, k: inv.k }));
+      const { code, entry } = await P.makeSpoken(owner.keys.sigPriv, owner.keys.sigPub, inner, days * 24);
+      const r = await put(entry);
+      if (r.n !== 1) { s.ws.close(); die("The server wouldn't keep that code. Check that its OWNER_KEY is this owner's (node tools/owner.js key)."); }
+      online = r.online;
+      console.log(P.fmtSpoken(code));
+    }
+    s.ws.close();
+    console.error(`\n${count} spoken code${count > 1 ? 's' : ''}. Say it out loud: they type the 12 digits into privatewebchat's "Invite code" box.\nEach works once and lasts ${days} days.`);
+    if (!online) console.error("Nobody's privatewebchat is online right now. Open it on your computer, so the code still works if the server restarts before it's used.");
   } else if (cmd === 'announce') {
     const owner = load();
     const what = args.join(' ').trim();
@@ -132,6 +166,6 @@ async function members(owner, session) {
     s.ws.close();
     console.log(`Removed ${target.name}. They've been disconnected and their invite no longer works.`);
   } else {
-    console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 15).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
+    console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 18).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
   }
 })().catch(e => die(e.message));

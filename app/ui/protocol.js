@@ -150,6 +150,44 @@
     return { g: { ik, exp, from: ownerCert, s: toB64(b.slice(20)) }, k };
   }
 
+  // ── Spoken invite codes ──
+  // 12 digits, short enough to say out loud. They stand for an ordinary invite code, encrypted with a
+  // key that only the 12 digits give (PBKDF2, slow on purpose: guessing a code takes years of computing,
+  // and they expire after a few days). The owner signs the encrypted copy; the server keeps it and
+  // hands every copy it has to anyone who asks, and members' apps keep them and hand them back after
+  // a restart, like announcements. The app that's joining tries its key on each.
+  const SPOKEN_ITER = 2000000;
+  const spokenDigits = s => String(s == null ? '' : s).replace(/[\s.-]/g, '');
+  const isSpoken = s => /^\d{12}$/.test(spokenDigits(s));
+  const fmtSpoken = s => spokenDigits(s).replace(/(\d{4})(?=\d)/g, '$1 ');
+  async function spokenKey(code, owner) {
+    const base = await subtle.importKey('raw', te.encode(spokenDigits(code)), 'PBKDF2', false, ['deriveKey']);
+    return subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: te.encode('pwc-spoken|' + owner), iterations: SPOKEN_ITER },
+      base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+  }
+  const spokenAad = (id, exp) => te.encode('pwc-spoken|' + id + '|' + exp);
+  // inviteCode is a PWC2. or PWC1. code; owner is the owner's public key. Returns { code, entry }.
+  async function makeSpoken(ownerPriv, owner, inviteCode, hours) {
+    let code = '';
+    while (code.length < 12) for (const x of crypto.getRandomValues(new Uint8Array(16))) if (x < 250 && code.length < 12) code += x % 10;
+    const id = randomHex(8), exp = Date.now() + Math.round(hours * 3600000), iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = toB64(await subtle.encrypt({ name: 'AES-GCM', iv, additionalData: spokenAad(id, exp) }, await spokenKey(code, owner), te.encode(inviteCode)));
+    return { code, entry: { id, exp, iv: toB64(iv), ct, s: await sign(ownerPriv, ['pwc-spoken', id, exp, toB64(iv), ct]) } };
+  }
+  async function checkSpoken(e, owner) {
+    if (!e || typeof e !== 'object' || typeof e.id !== 'string' || !ANN_ID.test(e.id) || !Number.isSafeInteger(e.exp) ||
+      !isB64(e.iv, IV, IV) || !isB64(e.ct, 24, 2400)) return null;
+    return (await verify(owner, ['pwc-spoken', e.id, e.exp, e.iv, e.ct], e.s)) ? { id: e.id, exp: e.exp, iv: e.iv, ct: e.ct, s: e.s } : null;
+  }
+  // The invite code a spoken code stands for, from entries already checked with checkSpoken, or null
+  async function openSpoken(code, owner, entries) {
+    const key = await spokenKey(code, owner);
+    for (const e of entries) {
+      try { return td.decode(await subtle.decrypt({ name: 'AES-GCM', iv: fromB64(e.iv), additionalData: spokenAad(e.id, e.exp) }, key, fromB64(e.ct))); } catch (x) { }
+    }
+    return null;
+  }
+
   // ── Announcements ──
   // Posts in Announcements are signed with the owner key (only the developer can post) and aren't
   // encrypted: everyone in the network reads them. Each app keeps them and hands them to the server
@@ -213,5 +251,6 @@
     PUB, SIG, WRAPPED, IV, MAX_NAME, MAX_TEXT, ID_RE, USERNAME_RE, toB64, fromB64, isB64, canon, cleanName, randomHex,
     generateKeys, sign, verify, idOf, safetyNumber, ownerCert, makeInvite, acceptInvite, verifyCert, isRemoved,
     signRemovals, checkRemovals, createBox, INVITE2, makeShortInvite, readShortInvite, MAX_ANN, signAnn, checkAnn,
+    isSpoken, fmtSpoken, makeSpoken, checkSpoken, openSpoken,
   };
 });

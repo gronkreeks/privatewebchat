@@ -32,7 +32,7 @@ function client(keys, cert, opts = {}) {
       const m = JSON.parse(e.data);
       if (m.t === 'hello') {
         if (opts.owner) c.send({ t: 'owner', sig: await P.sign(keys.sigPriv, ['pwc-owner', m.nonce]) });
-        else c.send({ t: 'auth', v: opts.v === undefined ? '1.1.5' : opts.v, cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null, ann: opts.ann });
+        else c.send({ t: 'auth', v: opts.v === undefined ? '1.1.5' : opts.v, cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null, ann: opts.ann, spoken: opts.spoken });
         return;
       }
       const w = c.waiters.findIndex(x => x.t === m.t);
@@ -128,14 +128,28 @@ const last = c => c.got.pop();
   await sleep(300);
   assert(!b4.got.some(m => m.t === 'ann'), 'an older version does not come back');
 
+  // Spoken codes: entries signed by the owner are kept, handed to members, and given to anyone who asks
+  const sp = await P.makeSpoken(ok.sigPriv, ok.sigPub, 'PWC2.example', 24);
+  const o = await client(ok, oc, { owner: true }); last(o);
+  o.send({ t: 'spoken_put', entries: [sp.entry, (await P.makeSpoken(bob.sigPriv, ok.sigPub, 'PWC2.fake', 24)).entry] });
+  assert.strictEqual((await o.next('spoken_put')).n, 1, 'only the owner-signed entry is kept');
+  assert.strictEqual((await b4.next('spoken')).entry.id, sp.entry.id, 'members get it to keep');
+  o.send({ t: 'spoken_get' });
+  const sl = await o.next('spoken_list');
+  assert(sl.entries.length === 1 && await P.openSpoken(sp.code, ok.sigPub, sl.entries) === 'PWC2.example', 'anyone can fetch it; the 12 digits open it');
+  o.send({ t: 'spoken_put', entries: [(await P.makeSpoken(ok.sigPriv, ok.sigPub, 'PWC2.old', -1)).entry] });
+  assert.strictEqual((await o.next('spoken_put')).n, 0, 'expired entries are refused');
+  o.ws.close();
+
   // Restart: the server forgets everything, then learns it back from the apps
   srv.kill(); await sleep(300);
   await startServer(ok.sigPub);
   const post2 = await P.signAnn(ok.sigPriv, P.randomHex(8), Date.now(), 'Still here');
-  const b5 = await client(bob, bc, { dir: [ac, bc], removals: rem, ann: [post2] });
+  const b5 = await client(bob, bc, { dir: [ac, bc], removals: rem, ann: [post2], spoken: [sp.entry] });
   const w5 = last(b5);
   assert.deepStrictEqual(w5.dir.map(c => c.m.name), ['bob'], 'removed member not re-admitted from an uploaded directory');
   assert.deepStrictEqual(w5.ann.map(x => x.text), ['Still here'], 'announcements come back from the apps after a restart');
+  assert.deepStrictEqual(w5.spoken.map(x => x.id), [sp.entry.id], 'spoken codes come back from the apps after a restart');
   assert.strictEqual(last(await client(alice, ac)).why, 'member', 'removed member refused after restart');
 
   // Usernames go to whoever had them first: backdating the join time in a cert doesn't help

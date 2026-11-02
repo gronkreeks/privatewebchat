@@ -286,16 +286,54 @@
     return owner;
   }
   let checked = null;   // { inv, owner } once the pasted code is valid
+  // A spoken code (12 digits, protocol.js) stands for an invite code that the server keeps encrypted.
+  // Looking it up can mean waking the server, which takes up to a minute.
+  function lookupSpoken(code, onSlow) {
+    return new Promise(res => {
+      let ws = null, done = false, owner = null;
+      const finish = r => { if (done) return; done = true; clearTimeout(slow); clearTimeout(give); try { ws.close(); } catch (e) { } res(r); };
+      const slow = setTimeout(onSlow, 3000);
+      const give = setTimeout(() => finish({ err: "Couldn't reach the server. Check your internet connection, then try again." }), 90000);
+      try { fetch(PwcConfig.SERVER.replace(/^ws/, 'http') + '/health', { mode: 'no-cors', cache: 'no-store' }).catch(() => { }); } catch (e) { }
+      try { ws = new WebSocket(PwcConfig.SERVER); } catch (e) { return finish({ err: "Couldn't reach the server." }); }
+      ws.onclose = () => finish({ err: "Couldn't reach the server. Try again in a moment." });
+      ws.onmessage = async e => {
+        let m; try { m = JSON.parse(e.data); } catch (x) { return; }
+        if (m.t === 'hello') {
+          owner = m.net;
+          if (!owner || (PwcConfig.OWNER_CERT && owner !== PwcConfig.OWNER_CERT.m.sig)) return finish({ err: "The server isn't set up for this network yet." });
+          ws.send(JSON.stringify({ t: 'spoken_get' }));
+        } else if (m.t === 'spoken_list') {
+          const entries = [];
+          for (const x of Array.isArray(m.entries) ? m.entries.slice(0, 500) : []) { const ok = await P.checkSpoken(x, owner); if (ok && ok.exp > Date.now()) entries.push(ok); }
+          const inner = entries.length ? await P.openSpoken(code, owner, entries) : null;
+          finish(inner ? { code: inner }
+            : { err: !entries.length && !m.online ? "Nobody in the network is online right now, so that code can't be checked yet. Try again in a little while, or ask for a written invite code."
+              : "That code didn't work. Check the 12 digits with whoever gave it to you: codes last 7 days and work once." });
+        }
+      };
+    });
+  }
   $('joinCode').addEventListener('input', async () => {
-    const text = $('joinCode').value, s = text.replace(/\s+/g, '');
-    const inv = await parseInvite(text);
+    const text = $('joinCode').value, s = text.replace(/\s+/g, ''), digits = text.replace(/[\s.-]/g, '');
+    let inv = null, spokenErr = null;
+    if (P.isSpoken(text)) {
+      checked = null;
+      for (const id of ['joinMore', 'joinRow']) $(id).classList.add('hidden');
+      err('joinErr', 'Checking that code…', true);
+      const r = await lookupSpoken(text, () => { if (text === $('joinCode').value) err('joinErr', 'Waking up the server… this can take up to a minute.', true); });
+      if (text !== $('joinCode').value) return;
+      if (r.code) inv = await parseInvite(r.code); else spokenErr = r.err;
+    } else inv = await parseInvite(text);
     const owner = inv && await checkInvite(inv);
     if (text !== $('joinCode').value) return;   // changed while checking
     checked = owner ? { inv, owner } : null;
     const expired = checked && inv.g.exp < Date.now();
     // The owner key (for Render) is easy to mistake for an invite code: it's what tools/owner.js key prints
-    err('joinErr', !s ? '' : P.isB64(s, P.PUB, P.PUB) && s[0] === 'B' ? "That's the owner key, which goes in the server's settings on Render. It isn't an invite code: make one with node tools/owner.js invite (that works for you too), then paste it here."
-      : !looksLikeCode(s) ? `That's not an invite code. Invite codes start with ${P.INVITE2}`
+    err('joinErr', spokenErr ? spokenErr : !s || /^\d{1,11}$/.test(digits) ? ''
+      : /^\d+$/.test(digits) ? 'Spoken codes have 12 digits.'
+      : P.isB64(s, P.PUB, P.PUB) && s[0] === 'B' ? "That's the owner key, which goes in the server's settings on Render. It isn't an invite code: make one with node tools/owner.js invite (that works for you too), then paste it here."
+      : !looksLikeCode(s) ? `That's not an invite code. Type the 12 digits you were told, or paste a code that starts with ${P.INVITE2}`
       : !checked ? "That invite code isn't valid. Make sure you copied all of it." : expired ? 'That invite code has expired. Ask for a new one.' : '');
     $('pasteRow').classList.toggle('hidden', !!checked);
     const show2 = !!checked && !expired;
@@ -354,7 +392,8 @@
   async function start() {
     D = Vault.data;
     D.friends = D.friends || {}; D.blocked = D.blocked || {}; D.outbox = D.outbox || {}; D.wanted = D.wanted || {};
-    D.ann = D.ann || {}; D.pings = D.pings || {};
+    D.ann = D.ann || {}; D.pings = D.pings || {}; D.spoken = D.spoken || {};
+    for (const [id, e] of Object.entries(D.spoken)) if (e.exp <= Date.now()) delete D.spoken[id];
     if (!D.rooms.announcements) D.rooms.announcements = { id: 'announcements', kind: 'ann', name: 'Announcements' };
     if (D.settings.notify === undefined) { D.settings.notify = true; D.settings.previews = true; }
     if (D.settings.startup === undefined) D.settings.startup = true;
@@ -489,7 +528,8 @@
         }
         S.boot = m.boot || null;
         if (S.boot && D.serverBoot !== S.boot) { if (D.serverBoot) clearHistory(); D.serverBoot = S.boot; await Vault.saveNow(); }
-        wsSend({ t: 'auth', v: PwcConfig.VERSION, cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals, ann: Object.values(D.ann).filter(a => a.s) });
+        wsSend({ t: 'auth', v: PwcConfig.VERSION, cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals, ann: Object.values(D.ann).filter(a => a.s),
+          spoken: Object.values(D.spoken).filter(e => e.exp > Date.now()) });
         break;
       case 'welcome':
         retry = 1500;
@@ -498,6 +538,7 @@
         if (m.removals) await applyRemovals(m.removals);
         for (const c of m.dir || []) await learn(c, true);
         for (const a of Array.isArray(m.ann) ? m.ann.slice(0, 200) : []) await takeAnn(a, false);
+        for (const e of Array.isArray(m.spoken) ? m.spoken.slice(0, 200) : []) await takeSpoken(e);
         S.online = new Set(m.online || []);
         S.live = true;
         setStatus('online');
@@ -513,6 +554,7 @@
         break;
       case 'removals': await applyRemovals(m.removals); break;
       case 'ann': await takeAnn(m.ann, true); break;
+      case 'spoken': await takeSpoken(m.entry); break;
       case 'env': await receive(m); break;
       case 'sent': markSent(m.ref); break;
       case 'error': markFailed(m.ref); err('chatErr', m.msg); break;
@@ -708,6 +750,17 @@
     for (const x of posts.slice(100)) delete D.ann[x.id];
     if (ok.text && !cur) annArrived(ok, live);
     else { Vault.save(); if (S.view === 'announcements') renderLog(); }
+  }
+  // Spoken invite codes: every app keeps the (encrypted) entries and hands them back to the server after
+  // a restart, so a code still works if the server went to sleep in between
+  async function takeSpoken(e) {
+    if (!e || typeof e !== 'object' || D.spoken[e.id]) return;
+    const ok = await P.checkSpoken(e, D.owner);
+    if (!ok || ok.exp <= Date.now()) return;
+    D.spoken[ok.id] = ok;
+    const all = Object.values(D.spoken).sort((x, y) => y.exp - x.exp);
+    for (const x of all.slice(200)) delete D.spoken[x.id];
+    Vault.save();
   }
   // Only on the computer with the owner key. Empty text deletes the post with that id.
   async function postAnn(text, id) {
@@ -1462,10 +1515,34 @@
         make.textContent = 'Make another';
       },
     }, 'Make an invite code');
+    // A spoken code: 12 digits that stand for an invite code the server keeps (see protocol.js)
+    const sayBox = h('div', { class: 'box mono big-code hidden' }), sayNote = h('div', { class: 'err' });
+    const say = h('button', {
+      class: 'link', onclick: async () => {
+        sayNote.className = 'err';
+        if (S.status !== 'online') { sayNote.textContent = 'Not connected right now. Spoken codes are kept on the server, so try again once the dot is lit.'; return; }
+        say.disabled = true;
+        let made = null;
+        try {
+          const key = await native.ownerSecret(), inner = key && await makeInviteCode(7);
+          if (inner) made = await P.makeSpoken(key, D.owner, inner, 7 * 24);
+        } catch (e) { }
+        say.disabled = false;
+        if (!made) { sayNote.textContent = "Couldn't read the owner key on this computer."; return; }
+        D.spoken[made.entry.id] = made.entry; Vault.save();
+        wsSend({ t: 'spoken_put', entries: [made.entry] });
+        sayBox.textContent = P.fmtSpoken(made.code);
+        sayBox.classList.remove('hidden');
+        sayNote.className = 'err ok';
+        sayNote.textContent = "Say it to them: they type the 12 digits into privatewebchat's Invite code box. Works once, for 7 days.";
+        say.textContent = 'Make another code to say out loud';
+      },
+    }, 'Make a code to say out loud');
     const groups = [
       ['Invites in Terminal', [
         ['Make one invite code (works once, lasts 90 days). Use this for yourself too: the owner key never logs in, you join with an invite like everyone else', 'node tools/owner.js invite'],
         ['Make 5 codes that last 30 days', 'node tools/owner.js invite 5 30'],
+        ['Make a code to say out loud (12 digits, works once, lasts 7 days)', 'node tools/owner.js spoken'],
       ]],
       ['Announcements', [
         ['Post the patch notes for a version (or just open Announcements and type)', 'node tools/owner.js announce docs/releases/v' + PwcConfig.VERSION + '.md'],
@@ -1488,7 +1565,8 @@
     modal('Owner commands',
       h('h3', { text: 'Invite someone' }),
       h('div', { class: 'row', style: 'margin-top:0' }, codeBox, copyCode), codeNote,
-      h('div', { class: 'row', style: 'margin-top:0.3rem' }, make),
+      h('div', { class: 'row', style: 'margin-top:0.3rem' }, make, say),
+      sayBox, sayNote,
       h('p', { class: 'hint', style: 'margin-top:1.2rem' }, 'Or run these in Terminal from the privatewebchat folder (', h('b', { text: 'cd ~/hush' }), '). The owner key is ~/.privatewebchat/owner.json: keep a backup of it somewhere safe.'),
       groups.map(([title, cmds]) => [h('h3', { text: title }), cmds.map(([what, cmd]) => {
         const btn = h('button', { class: 'link', onclick: () => { copy(cmd); btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); } }, 'Copy');

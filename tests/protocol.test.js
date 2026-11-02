@@ -57,6 +57,18 @@ const assert = require('assert');
   const forged = await P.readShortInvite(await P.makeShortInvite(alice.sigPriv, 24), oc);
   assert(!(await P.verifyCert(await P.acceptInvite(forged, eve, 'Eve'), ok.sigPub)), 'short code not signed by the owner rejected');
   assert(!(await P.readShortInvite('PWC2.short', oc)), 'malformed short code');
+  // spoken codes: 12 digits that unlock an ordinary invite code kept (encrypted) by the server
+  const sp = await P.makeSpoken(ok.sigPriv, ok.sigPub, code, 24);
+  assert(/^\d{12}$/.test(sp.code) && P.isSpoken(P.fmtSpoken(sp.code)) && P.fmtSpoken(sp.code).length === 14, 'twelve digits, said in threes of four');
+  const spe = await P.checkSpoken(JSON.parse(JSON.stringify(sp.entry)), ok.sigPub);
+  assert(spe && !JSON.stringify(spe).includes(code.slice(5, 40)), 'entry signed by the owner, invite encrypted');
+  const other = await P.checkSpoken((await P.makeSpoken(ok.sigPriv, ok.sigPub, 'PWC2.other', 24)).entry, ok.sigPub);
+  assert.strictEqual(await P.openSpoken(P.fmtSpoken(sp.code), ok.sigPub, [other, spe]), code, 'the code opens its own entry among others');
+  const wrong = String((Number(sp.code[11]) + 1) % 10);
+  assert.strictEqual(await P.openSpoken(sp.code.slice(0, 11) + wrong, ok.sigPub, [spe]), null, 'a wrong digit opens nothing');
+  assert(!(await P.checkSpoken({ ...sp.entry, exp: sp.entry.exp + 1 }, ok.sigPub)), 'changed entry rejected');
+  assert(!(await P.checkSpoken((await P.makeSpoken(alice.sigPriv, ok.sigPub, code, 24)).entry, ok.sigPub)), 'entry not signed by the owner rejected');
+  assert(!P.isSpoken('1234 5678 901') && P.isSpoken('1234-5678-9012'), 'twelve digits, spaces or dashes');
   // announcements
   const ann = await P.signAnn(ok.sigPriv, P.randomHex(8), Date.now(), '## v1.1.6\n- Pings');
   assert(await P.checkAnn(JSON.parse(JSON.stringify(ann)), ok.sigPub), 'owner announcement');

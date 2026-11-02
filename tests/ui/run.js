@@ -556,8 +556,30 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert.strictEqual(await maya.js(`return window.__copied`), appCode, 'copy the invite code');
   await maya.js(`[...document.querySelectorAll('#modalCard .box')].find(b => b.textContent === 'node tools/owner.js invite').parentNode.querySelector('button').click()`);
   assert.strictEqual(await maya.js(`return window.__copied`), 'node tools/owner.js invite', 'copy button');
+  await maya.clickText('Make a code to say out loud');
+  await maya.until(`/^\\d{4} \\d{4} \\d{4}$/.test(document.querySelector('#modalCard .big-code').textContent)`, 'spoken code made in the app');
+  const spoken = await maya.js(`return document.querySelector('#modalCard .big-code').textContent`);
   await maya.js(`[...document.querySelectorAll('#modalCard button')].pop().click()`);
   console.log('✓ owner commands and in-app invite codes show only with the owner key and the PIN');
+
+  // ── Joining by typing a code someone said out loud ──
+  const spk = await newPage('spk');
+  await spk.size(1100, 700);
+  await spk.goto(url);
+  await spk.until(`!$('sWelcome').classList.contains('hidden')`, 'welcome');
+  await spk.fill('#joinCode', spoken.slice(0, 9));
+  assert.strictEqual(await spk.js(`return $('joinErr').textContent`), '', 'no complaint while the digits are still being typed');
+  const wrongDigit = spoken.slice(0, -1) + String((Number(spoken.slice(-1)) + 1) % 10);
+  await spk.fill('#joinCode', wrongDigit);
+  await spk.until(`$('joinErr').textContent.includes("didn't work")`, 'a wrong digit is refused');
+  await spk.fill('#joinCode', spoken.replace(/ /g, '-'));
+  await spk.until(`!$('joinMore').classList.contains('hidden')`, 'username box after the spoken code');
+  await spk.fill('#joinName', 'ravi');
+  await spk.click('#joinNext');
+  await setPin(spk, '8642');
+  await online(spk);
+  await maya.until(`Object.keys(Vault.data.dir).length && [...Object.values(Vault.data.dir)].some(c => c.m.name === 'ravi')`, 'maya sees ravi join');
+  console.log('✓ a 12-digit code said out loud gets someone in');
 
   // ── Usernames are unique ──
   const dup = await newPage('dup');
