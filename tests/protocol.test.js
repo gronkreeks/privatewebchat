@@ -42,6 +42,26 @@ const assert = require('assert');
   assert((await boxB.open({ ...envB, from: oi.id }, ok.ecdhPub)) === null, 'relabelled sender rejected');
   assert((await boxO.open(envB, alice.ecdhPub)) === null, "someone else's key rejected");
   assert(P.isB64(sealed.keys[bi.id], P.WRAPPED, P.WRAPPED) && P.isB64(sealed.iv, P.IV, P.IV), 'sizes match server checks');
+  // short invite codes give the same kind of certificate as long ones
+  const code = await P.makeShortInvite(ok.sigPriv, 24);
+  assert(code.startsWith('PWC2.') && code.length === 117, 'short code is 117 characters');
+  const si = await P.readShortInvite(code, oc);
+  const sc = await P.acceptInvite(si, eve, 'Eve');
+  const sci = await P.verifyCert(JSON.parse(JSON.stringify(sc)), ok.sigPub);
+  assert(sci && sci.by === oi.id && sci.ik === si.g.ik, 'short invite cert');
+  assert(Math.abs(si.g.exp - (Date.now() + 24 * 3600000)) < 120000, 'short invite expiry');
+  assert.strictEqual((await P.readShortInvite(code, oc)).g.ik, si.g.ik, 'same code, same invite key');
+  const bad = code.slice(0, 30) + (code[30] === 'A' ? 'B' : 'A') + code.slice(31);
+  const bi2 = await P.readShortInvite(bad, oc);
+  assert(!bi2 || !(await P.verifyCert(await P.acceptInvite(bi2, eve, 'Eve'), ok.sigPub)), 'changed short code rejected');
+  const forged = await P.readShortInvite(await P.makeShortInvite(alice.sigPriv, 24), oc);
+  assert(!(await P.verifyCert(await P.acceptInvite(forged, eve, 'Eve'), ok.sigPub)), 'short code not signed by the owner rejected');
+  assert(!(await P.readShortInvite('PWC2.short', oc)), 'malformed short code');
+  // announcements
+  const ann = await P.signAnn(ok.sigPriv, P.randomHex(8), Date.now(), '## v1.1.6\n- Pings');
+  assert(await P.checkAnn(JSON.parse(JSON.stringify(ann)), ok.sigPub), 'owner announcement');
+  assert(!(await P.checkAnn({ ...ann, text: 'changed' }, ok.sigPub)), 'edited announcement rejected');
+  assert(!(await P.checkAnn(await P.signAnn(alice.sigPriv, ann.id, ann.at, ann.text), ok.sigPub)), 'member announcement rejected');
   console.log('safety', await P.safetyNumber(ac.m));
   console.log('cert size', JSON.stringify(bc).length, 'all protocol tests passed');
 })().catch(e => { console.error('FAIL', e); process.exit(1); });

@@ -1,5 +1,6 @@
 // Windows side of platform.h: files in %APPDATA%\privatewebchat, the device secret protected with DPAPI
-// (only this Windows account can decrypt it), and the background panic key through RegisterHotKey.
+// (only this Windows account can decrypt it), the background panic key through RegisterHotKey, one
+// running copy at a time, and opening at login through the Run key.
 #define WIN32_LEAN_AND_MEAN
 #define _WIN32_WINNT 0x0601
 #define _WIN32_IE 0x0700
@@ -108,6 +109,8 @@ static WNDPROC orig_proc;
 static void (*hot_fn)(void);
 static int hot_on;
 static void (*hide_fn)(void);
+static void (*focus_fn)(int);
+static UINT show_msg;   // "privatewebchat-show": another copy was opened, so come back
 static int quitting;
 #define WM_TRAY (WM_APP + 1)
 #define TRAY_OPEN 1
@@ -117,6 +120,8 @@ static void show_window(HWND h) {
   ShowWindow(h, IsIconic(h) ? SW_RESTORE : SW_SHOW);
   SetForegroundWindow(h);
 }
+int plat_focused(void) { return hw && IsWindowVisible(hw) && !IsIconic(hw) && GetForegroundWindow() == hw; }
+void plat_on_focus(void (*fn)(int)) { focus_fn = fn; }
 static void tray_menu(HWND h) {
   HMENU m = CreatePopupMenu();
   AppendMenuW(m, MF_STRING, TRAY_OPEN, L"Open privatewebchat");
@@ -133,10 +138,14 @@ static void tray_menu(HWND h) {
 }
 static LRESULT CALLBACK proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
   if (m == WM_HOTKEY && wp == 1) { if (hot_fn) hot_fn(); return 0; }
+  if (show_msg && m == show_msg) { show_window(h); return 0; }
+  // The page doesn't always hear about this (WebView2 keeps its focus while the window is hidden)
+  if (m == WM_ACTIVATE && focus_fn) focus_fn(LOWORD(wp) != WA_INACTIVE && !HIWORD(wp));
   // Closing the window only hides it in the tray, until Quit in the tray icon's menu
   if (m == WM_CLOSE && hide_fn && !quitting) {
     hide_fn();
     ShowWindow(h, SW_HIDE);
+    if (focus_fn) focus_fn(0);
     return 0;
   }
   // Clicking a notification or the tray icon brings privatewebchat back; right-click for the menu
@@ -160,6 +169,7 @@ static HICON app_icon(int metric) {
 }
 void plat_init(void *window) {
   hw = (HWND)window;
+  show_msg = RegisterWindowMessageW(L"privatewebchat-show");
   orig_proc = (WNDPROC)SetWindowLongPtrW(hw, GWLP_WNDPROC, (LONG_PTR)proc);
   SendMessageW(hw, WM_SETICON, ICON_BIG, (LPARAM)app_icon(SM_CXICON));
   SendMessageW(hw, WM_SETICON, ICON_SMALL, (LPARAM)app_icon(SM_CXSMICON));
@@ -208,8 +218,12 @@ void plat_notify_setup(void) {}
 void plat_notify(const char *title, const char *body) {
   if (!hw) return;
   if (!tray_on && !tray_add()) return;
+  // With the app's own icon (not the blue "i"), shown as a toast on Windows 10 and 11
+  static HICON big;
+  if (!big) big = app_icon(SM_CXICON);
   nid.uFlags = NIF_INFO;
-  nid.dwInfoFlags = NIIF_INFO;
+  nid.dwInfoFlags = NIIF_USER | NIIF_LARGE_ICON;
+  nid.hBalloonIcon = big;
   utf8_to(nid.szInfoTitle, (int)(sizeof nid.szInfoTitle / sizeof(wchar_t)), title);
   utf8_to(nid.szInfo, (int)(sizeof nid.szInfo / sizeof(wchar_t)), body);
   Shell_NotifyIconW(NIM_MODIFY, &nid);
@@ -273,7 +287,10 @@ int plat_update_install(const char *name) {
     if (MoveFileExW(upd, exe, MOVEFILE_COPY_ALLOWED | MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
       STARTUPINFOW si = { sizeof si };
       PROCESS_INFORMATION pi;
-      if (CreateProcessW(exe, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
+      // --after-update: this copy is still quitting, so the new one waits for it (plat_single_instance)
+      wchar_t cmd[PATH_MAX_W + 32];
+      swprintf(cmd, PATH_MAX_W + 32, L"\"%ls\" --after-update", exe);
+      if (CreateProcessW(exe, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) { CloseHandle(pi.hThread); CloseHandle(pi.hProcess); }
       return 0;
     }
     MoveFileExW(old, exe, 0);
@@ -297,6 +314,44 @@ void plat_update_cleanup(void) {
   exe_paths(exe, old);
   HANDLE t = GetFileAttributesW(old) != INVALID_FILE_ATTRIBUTES ? CreateThread(NULL, 0, cleanup_loop, old, 0, NULL) : NULL;
   if (t) CloseHandle(t); else free(old);
+}
+
+// ──────────── One copy at a time ────────────
+// Opening privatewebchat while it's already running (closed to the tray, or opened again at login)
+// used to start another copy each time. Now the new one asks the running one to show its window,
+// and quits. The mutex is held until this copy quits.
+static HANDLE single;
+int plat_single_instance(int argc, char **argv) {
+  int after_update = 0;
+  for (int i = 1; i < argc; i++) if (!strcmp(argv[i], "--after-update")) after_update = 1;
+  single = CreateMutexW(NULL, TRUE, L"Local\\privatewebchat-running");
+  if (!single || GetLastError() != ERROR_ALREADY_EXISTS) return 0;
+  if (after_update) {
+    DWORD r = WaitForSingleObject(single, 30000);
+    if (r == WAIT_OBJECT_0 || r == WAIT_ABANDONED) return 0;
+  }
+  AllowSetForegroundWindow(ASFW_ANY);
+  PostMessageW(HWND_BROADCAST, RegisterWindowMessageW(L"privatewebchat-show"), 0, 0);
+  return 1;
+}
+
+// ──────────── Open at login ────────────
+#define RUN_KEY L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+int plat_set_startup(int on) {
+  HKEY k;
+  if (RegOpenKeyExW(HKEY_CURRENT_USER, RUN_KEY, 0, KEY_SET_VALUE, &k) != ERROR_SUCCESS) return 0;
+  LONG r;
+  if (on) {
+    wchar_t exe[PATH_MAX_W], cmd[PATH_MAX_W + 32];
+    GetModuleFileNameW(NULL, exe, PATH_MAX_W);
+    swprintf(cmd, PATH_MAX_W + 32, L"\"%ls\"", exe);
+    r = RegSetValueExW(k, L"privatewebchat", 0, REG_SZ, (const BYTE *)cmd, (DWORD)((wcslen(cmd) + 1) * sizeof(wchar_t)));
+  } else {
+    r = RegDeleteValueW(k, L"privatewebchat");
+    if (r == ERROR_FILE_NOT_FOUND) r = ERROR_SUCCESS;
+  }
+  RegCloseKey(k);
+  return r == ERROR_SUCCESS;
 }
 
 // ──────────── Background panic key ────────────

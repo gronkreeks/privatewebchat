@@ -32,7 +32,7 @@ function client(keys, cert, opts = {}) {
       const m = JSON.parse(e.data);
       if (m.t === 'hello') {
         if (opts.owner) c.send({ t: 'owner', sig: await P.sign(keys.sigPriv, ['pwc-owner', m.nonce]) });
-        else c.send({ t: 'auth', v: opts.v === undefined ? '1.1.5' : opts.v, cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null });
+        else c.send({ t: 'auth', v: opts.v === undefined ? '1.1.5' : opts.v, cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null, ann: opts.ann });
         return;
       }
       const w = c.waiters.findIndex(x => x.t === m.t);
@@ -113,11 +113,29 @@ const last = c => c.got.pop();
   await sleep(300);
   assert.strictEqual(b4.ws.readyState, 1, 'removals not signed by the owner are ignored');
 
+  // Announcements: only the owner's signature counts, and everyone online gets them
+  const post = await P.signAnn(ok.sigPriv, P.randomHex(8), Date.now(), 'Patch notes');
+  anon.send(JSON.stringify({ t: 'announce', ann: post }));
+  assert.strictEqual((await b4.next('ann')).ann.text, 'Patch notes', 'announcement relayed');
+  anon.send(JSON.stringify({ t: 'announce', ann: await P.signAnn(bob.sigPriv, P.randomHex(8), Date.now(), 'fake') }));
+  anon.send(JSON.stringify({ t: 'announce', ann: { ...post, text: 'edited' } }));
+  await sleep(300);
+  assert(!b4.got.some(m => m.t === 'ann'), 'announcements not signed by the owner are ignored');
+  const gone = await P.signAnn(ok.sigPriv, post.id, post.at + 1, '');
+  anon.send(JSON.stringify({ t: 'announce', ann: gone }));
+  assert.strictEqual((await b4.next('ann')).ann.text, '', 'deleting an announcement is relayed');
+  anon.send(JSON.stringify({ t: 'announce', ann: post }));
+  await sleep(300);
+  assert(!b4.got.some(m => m.t === 'ann'), 'an older version does not come back');
+
   // Restart: the server forgets everything, then learns it back from the apps
   srv.kill(); await sleep(300);
   await startServer(ok.sigPub);
-  const b5 = await client(bob, bc, { dir: [ac, bc], removals: rem });
-  assert.deepStrictEqual(last(b5).dir.map(c => c.m.name), ['bob'], 'removed member not re-admitted from an uploaded directory');
+  const post2 = await P.signAnn(ok.sigPriv, P.randomHex(8), Date.now(), 'Still here');
+  const b5 = await client(bob, bc, { dir: [ac, bc], removals: rem, ann: [post2] });
+  const w5 = last(b5);
+  assert.deepStrictEqual(w5.dir.map(c => c.m.name), ['bob'], 'removed member not re-admitted from an uploaded directory');
+  assert.deepStrictEqual(w5.ann.map(x => x.text), ['Still here'], 'announcements come back from the apps after a restart');
   assert.strictEqual(last(await client(alice, ac)).why, 'member', 'removed member refused after restart');
 
   // Usernames go to whoever had them first: backdating the join time in a cert doesn't help

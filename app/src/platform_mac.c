@@ -228,16 +228,22 @@ static const char *SWAP =
   "rmdir \"$m\"; rm -f \"$2\"\n"
   "xattr -dr com.apple.quarantine \"$1\" 2>/dev/null\n"
   "open \"$1\"\n";
-int plat_update_install(const char *name) {
-  char dmg[1200], exe[PATH_MAX], real[PATH_MAX], pid[24];
-  path_for(name, dmg, sizeof dmg);
+// The app: the folder around Contents/MacOS/privatewebchat, written to real. NULL when it isn't running
+// from where it was put (straight from the disk image, or moved by macOS to a read-only spot).
+static char *app_bundle(char real[PATH_MAX]) {
+  char exe[PATH_MAX], *cut;
   uint32_t size = sizeof exe;
-  // The app is the folder around Contents/MacOS/privatewebchat
-  char *app = NULL, *cut;
-  if (!_NSGetExecutablePath(exe, &size) && realpath(exe, real) && (cut = strstr(real, ".app/Contents/MacOS/"))) { cut[4] = 0; app = real; }
+  if (_NSGetExecutablePath(exe, &size) || !realpath(exe, real) || !(cut = strstr(real, ".app/Contents/MacOS/"))) return NULL;
+  cut[4] = 0;
+  return strstr(real, "/AppTranslocation/") || !strncmp(real, "/Volumes/", 9) ? NULL : real;
+}
+int plat_update_install(const char *name) {
+  char dmg[1200], real[PATH_MAX], pid[24];
+  path_for(name, dmg, sizeof dmg);
+  char *app = app_bundle(real);
   // Opened straight from the disk image, or moved somewhere macOS keeps read-only: open the disk image
   // so it can be dragged into Applications by hand
-  int ok = app && !strstr(app, "/AppTranslocation/") && strncmp(app, "/Volumes/", 9) && !access(app, W_OK);
+  int ok = app && !access(app, W_OK);
   if (ok) {
     char parent[PATH_MAX];
     snprintf(parent, sizeof parent, "%s", app);
@@ -255,6 +261,48 @@ int plat_update_install(const char *name) {
   return run(argv, 1) ? 1 : 0;
 }
 void plat_update_cleanup(void) { }   // the swap script tidies up after itself
+
+// ──────────── One copy, and opening at login ────────────
+int plat_single_instance(int argc, char **argv) { (void)argc; (void)argv; return 0; }   // macOS keeps one copy of an app
+// A launch agent that opens the app when you log in. It's written again every time privatewebchat
+// unlocks, so it follows the app if it moves.
+int plat_set_startup(int on) {
+  const char *home = getenv("HOME");
+  char plist[1200], real[PATH_MAX], esc[PATH_MAX * 6];
+  if (!home) return 0;
+  snprintf(plist, sizeof plist, "%s/Library/LaunchAgents/app.privatewebchat.desktop.plist", home);
+  if (!on) return unlink(plist) == 0 || errno == ENOENT;
+  char *app = app_bundle(real);
+  if (!app) return 0;
+  char *o = esc;
+  for (const char *s = app; *s; s++) {
+    const char *r = *s == '&' ? "&amp;" : *s == '<' ? "&lt;" : *s == '>' ? "&gt;" : NULL;
+    if (r) { strcpy(o, r); o += strlen(r); } else *o++ = *s;
+  }
+  *o = 0;
+  char dir[1100], body[PATH_MAX * 6 + 1024];
+  snprintf(dir, sizeof dir, "%s/Library/LaunchAgents", home);
+  mkdir(dir, 0755);
+  snprintf(body, sizeof body, "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+    "<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+    "<plist version=\"1.0\">\n<dict>\n"
+    "  <key>Label</key><string>app.privatewebchat.desktop</string>\n"
+    "  <key>ProgramArguments</key><array><string>/usr/bin/open</string><string>-a</string><string>%s</string></array>\n"
+    "  <key>RunAtLoad</key><true/>\n"
+    "  <key>LimitLoadToSessionType</key><string>Aqua</string>\n"
+    "</dict>\n</plist>\n", esc);
+  // Only written when it changes: macOS tells you about a new login item each time the file does
+  char old[sizeof body];
+  FILE *f = fopen(plist, "r");
+  size_t n = f ? fread(old, 1, sizeof old - 1, f) : 0;
+  if (f) fclose(f);
+  old[n] = 0;
+  if (!strcmp(old, body)) return 1;
+  f = fopen(plist, "w");
+  if (!f) return 0;
+  fputs(body, f);
+  return fclose(f) == 0;
+}
 
 // ──────────── Notifications (UserNotifications framework) ────────────
 // Only works when running as privatewebchat.app: a bare binary has no bundle identifier, and the framework

@@ -305,6 +305,7 @@ static void b_pin_result(const char *id, const char *req, void *arg) {
 static void b_wipe(const char *id, const char *req, void *arg) {
   (void)req; (void)arg;
   plat_set_hotkey(NULL, NULL);
+  plat_set_startup(0);
   plat_forget_device_secret();
   plat_remove(VAULT);
   plat_remove(VAULT ".tmp");
@@ -329,28 +330,51 @@ static void b_paste(const char *id, const char *req, void *arg) {
   ret(id, q ? q : "null");
   free(q); free(t);
 }
-// The owner's public key, when this computer holds the owner key (~/.privatewebchat/owner.json, made by
-// tools/owner.js), so the app can show the owner's commands. Only the public key leaves this function.
-static void b_owner_key(const char *id, const char *req, void *arg) {
-  (void)req; (void)arg;
+// A field of the owner key file (~/.privatewebchat/owner.json, made by tools/owner.js), when this computer
+// holds it: a malloc'd JSON string whose length is between min and max, or NULL.
+static char *owner_field(const char *field, size_t min, size_t max) {
 #ifdef _WIN32
   const char *home = getenv("USERPROFILE");
 #else
   const char *home = getenv("HOME");
 #endif
-  char path[1024], buf[8192], *pub = NULL;
+  char path[1024], buf[8192], key[32];
   size_t n = 0;
   FILE *f = NULL;
   if (home && snprintf(path, sizeof path, "%s/.privatewebchat/owner.json", home) < (int)sizeof path) f = fopen(path, "rb");
   if (f) { n = fread(buf, 1, sizeof buf - 1, f); fclose(f); }
   buf[n] = 0;
-  char *k = strstr(buf, "\"sigPub\"");
-  char *a = k ? strchr(k + 8, '"') : NULL;
+  snprintf(key, sizeof key, "\"%s\"", field);
+  char *k = strstr(buf, key);
+  char *a = k ? strchr(k + strlen(key), '"') : NULL;
   char *b = a ? strchr(a + 1, '"') : NULL;
-  if (b && b - a - 1 == 88) pub = json_quote(a + 1, (size_t)(b - a - 1));
+  char *out = b && (size_t)(b - a - 1) >= min && (size_t)(b - a - 1) <= max ? json_quote(a + 1, (size_t)(b - a - 1)) : NULL;
+  memset(buf, 0, sizeof buf);
+  return out;
+}
+// The owner's public key, so the app can show the owner's commands
+static void b_owner_key(const char *id, const char *req, void *arg) {
+  (void)req; (void)arg;
+  char *pub = owner_field("sigPub", 88, 88);
   ret(id, pub ? pub : "null");
   free(pub);
 }
+// The owner's signing key, which the app uses (after the PIN) to make invite codes and post in Announcements
+static void b_owner_secret(const char *id, const char *req, void *arg) {
+  (void)req; (void)arg;
+  char *priv = owner_field("sigPriv", 100, 400);
+  ret(id, priv ? priv : "null");
+  free(priv);
+}
+// Open at login: returns whether it's now set up the way the UI asked
+static void b_startup(const char *id, const char *req, void *arg) {
+  (void)arg;
+  ret(id, plat_set_startup(arg_true(req, 0)) ? "true" : "false");
+}
+// Whether privatewebchat's window is the one being used. The web page can't always tell (closed to the
+// tray, or behind other apps), and notifications depend on it.
+static void b_focused(const char *id, const char *req, void *arg) { (void)req; (void)arg; ret(id, plat_focused() ? "true" : "false"); }
+static void on_focus(int on) { webview_eval(w, on ? "window.PwcFocus && window.PwcFocus(true)" : "window.PwcFocus && window.PwcFocus(false)"); }
 static void b_notify_setup(const char *id, const char *req, void *arg) { (void)req; (void)arg; plat_notify_setup(); ret(id, "null"); }
 static void b_notify(const char *id, const char *req, void *arg) {
   (void)arg;
@@ -480,6 +504,7 @@ static void after_start(webview_t wv, void *arg) {
   (void)arg;
   plat_init(webview_get_window(wv));
   plat_close_to_tray(on_hide);
+  plat_on_focus(on_focus);
 }
 
 #ifdef PWC_SELFTEST
@@ -501,12 +526,15 @@ static const char *SELFTEST_JS =
   "  try {"
   "    const k = await PwcProto.generateKeys(); r.keys = !!k.sigPub;"
   "    const c = await PwcProto.ownerCert(k, 'Test'); r.cert = !!(await PwcProto.verifyCert(c, k.sigPub));"
+  "    const si = await PwcProto.readShortInvite(await PwcProto.makeShortInvite(k.sigPriv, 1), c);"
+  "    r.shortInvite = !!(si && await PwcProto.verify(k.sigPub, ['pwc-invite', si.g.ik, si.g.exp], si.g.s));"
   "    const b = await crypto.subtle.importKey('raw', new TextEncoder().encode('1234'), 'PBKDF2', false, ['deriveBits']);"
   "    const t = performance.now();"
   "    await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: new Uint8Array(16), iterations: 600000 }, b, 256);"
   "    r.pbkdf2ms = Math.round(performance.now() - t);"
   "  } catch (e) { r.err = String(e); }"
   "  r.pinWait = await pwc_pin_start();"
+  "  r.focused = await pwc_focused();"
   "  r.clipboard = String(await pwc_paste() || '').slice(0, 5);"
   "  r.screen = [...document.querySelectorAll('section')].filter(s => !s.classList.contains('hidden')).map(s => s.id).join();"
   "  const url = new URLSearchParams(location.hash.slice(1)).get('ws');"
@@ -525,10 +553,12 @@ static const char *SELFTEST_JS =
   "});";
 #endif
 
-int main(void) {
+int main(int argc, char **argv) {
 #ifndef _WIN32
   signal(SIGPIPE, SIG_IGN);
 #endif
+  // Opening privatewebchat again while it's running (in the tray, say) brings back the one that's running
+  if (plat_single_instance(argc, argv)) return 0;
   if (serve_start()) { plat_fatal("privatewebchat couldn't start."); return 1; }
   plat_update_cleanup();
   w = webview_create(PWC_DEBUG, NULL);
@@ -555,6 +585,9 @@ int main(void) {
   webview_bind(w, "pwc_copy", b_copy, NULL);
   webview_bind(w, "pwc_paste", b_paste, NULL);
   webview_bind(w, "pwc_owner_key", b_owner_key, NULL);
+  webview_bind(w, "pwc_owner_secret", b_owner_secret, NULL);
+  webview_bind(w, "pwc_startup", b_startup, NULL);
+  webview_bind(w, "pwc_focused", b_focused, NULL);
   webview_bind(w, "pwc_notify_setup", b_notify_setup, NULL);
   webview_bind(w, "pwc_notify", b_notify, NULL);
   webview_bind(w, "pwc_update", b_update, NULL);
@@ -574,6 +607,7 @@ int main(void) {
   webview_navigate(w, url);
 #endif
   webview_run(w);
+  plat_on_focus(NULL);   // the window can still change focus while it's being taken down
   plat_set_hotkey(NULL, NULL);
   plat_shutdown();
   webview_destroy(w);

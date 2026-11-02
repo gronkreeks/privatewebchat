@@ -13,7 +13,7 @@
       <div class="card narrow">
         <div class="brand"><span class="logo"></span>privatewebchat</div>
         <label class="lbl" for="joinCode">Invite code</label>
-        <textarea id="joinCode" class="in code" rows="4" spellcheck="false" placeholder="Paste your invite code"></textarea>
+        <textarea id="joinCode" class="in code" rows="3" spellcheck="false" placeholder="Paste your invite code (it starts with PWC2.)"></textarea>
         <div class="row" id="pasteRow"><button class="link" id="pasteBtn">Paste</button></div>
         <div id="joinMore" class="hidden">
           <label class="lbl" for="joinName">Username</label>
@@ -77,6 +77,7 @@
         <div class="side-scroll">
           <button class="item big" id="navFriends"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c0-3.6 2.9-6 6.5-6s6.5 2.4 6.5 6"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18.5 14.4c1.9.8 3 2.8 3 5.6"/></svg></span><span class="nm">Friends</span><span class="badge hidden" id="friendsBadge"></span></button>
           <button class="item big" id="navGeneral"><span class="ico hash">#</span><span class="nm">General</span><span class="badge hidden" id="generalBadge"></span></button>
+          <button class="item big" id="navAnn"><span class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10v4a1 1 0 0 0 1 1h3l6 4V5L7 9H4a1 1 0 0 0-1 1z"/><path d="M17 9a3.5 3.5 0 0 1 0 6M19.5 6.5a7 7 0 0 1 0 11"/></svg></span><span class="nm">Announcements</span><span class="badge hidden" id="annBadge"></span></button>
           <div class="side-h"><span>Messages</span><button class="icon" id="newGroup" title="New group chat">+</button></div>
           <div id="inbox"></div>
         </div>
@@ -111,13 +112,15 @@
               <span id="roomAv"></span>
               <div>
                 <h2 id="roomTitle"></h2>
-                <div class="sub"><span class="lock">End-to-end encrypted</span><span id="roomSub"></span></div>
+                <div class="sub"><span class="lock" id="roomLock">End-to-end encrypted</span><span id="roomSub"></span></div>
               </div>
             </div>
             <button class="link" id="roomAction"></button>
           </header>
           <div class="log" id="log"></div>
-          <div class="composer">
+          <div class="ann-locked hidden" id="annLocked">Only the developer can post in Announcements.</div>
+          <div class="composer" id="composer">
+            <div class="pings hidden" id="pingList" role="listbox" aria-label="People to mention"></div>
             <div class="replying hidden" id="replyBar"><span id="replyText"></span><button class="icon" id="replyX" title="Cancel reply">×</button></div>
             <div class="prompt-top" id="promptTop"></div>
             <div class="composer-row">

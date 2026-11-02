@@ -26,6 +26,16 @@ void plat_close_to_tray(void (*on_hide)(void));
 // such as "F9" or "Escape"; NULL removes it. Returns 1 if the key was registered.
 int plat_set_hotkey(const char *code, void (*fn)(void));
 void plat_attention(void);           // bounce the Dock icon / flash the taskbar button
+// Whether the window is on screen and the one in use, and a function to call when that changes
+// (Mac side in webview_cef.mm)
+int plat_focused(void);
+void plat_on_focus(void (*fn)(int on));
+// Returns 1 when privatewebchat is already running: that copy is brought back and this one quits.
+// (Windows; on Mac, macOS already keeps one copy of an app.)
+int plat_single_instance(int argc, char **argv);
+// Open privatewebchat when you log in: a login item on Mac, the Run key on Windows. Returns 1 when it's
+// now on (on = 1) or off (on = 0) as asked; 0 when it can't be, e.g. a Mac app still in Downloads.
+int plat_set_startup(int on);
 // Desktop notifications: Notification Center on Mac, a tray notification on Windows.
 // plat_notify_setup asks for permission the first time (Mac).
 void plat_notify_setup(void);

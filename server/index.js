@@ -5,7 +5,8 @@
 // the server keeps nothing on disk. Members' apps re-upload what it needs when they connect.
 // Messages only last while the server is running: a restart drops every queued envelope, and the
 // apps delete their copies when they see the new boot id. Set DATA_DIR to a Render disk to keep the
-// member list across restarts (never the queues).
+// member list across restarts (never the queues). Announcements are the exception to messages lasting
+// only while it runs: they're signed by the owner, not encrypted, and the apps hand them back after a restart.
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -47,6 +48,8 @@ const certCache = new Map();    // hash of a cert -> verified info
 const online = new Map();       // id -> ws
 const queues = new Map();       // id -> [envelope]
 let removals = { v: 0, ids: [] }, removed = new Set();
+const anns = new Map();         // id -> owner-signed announcement (newest version of each)
+const MAX_ANNS = 100;
 let envSeq = 0;
 // Changes on every start, so apps know queued envelopes were lost and resend what wasn't confirmed
 const BOOT = crypto.randomBytes(8).toString('hex');
@@ -111,6 +114,22 @@ async function applyRemovals(r) {
   save();
 }
 
+// Announcements (owner posts) come from the owner's app, or back from members' apps after a restart.
+// Returns true if this one was new, or newer than the copy here.
+async function mergeAnn(a) {
+  const cur = a && typeof a === 'object' && anns.get(a.id);
+  if (cur && (cur.at > a.at || (cur.at === a.at && cur.s === a.s))) return false;
+  const ok = await P.checkAnn(a, OWNER_KEY);
+  if (!ok || (cur && cur.at >= ok.at)) return false;
+  anns.set(ok.id, ok);
+  if (anns.size > MAX_ANNS) anns.delete([...anns.values()].sort((x, y) => x.at - y.at)[0].id);
+  return anns.get(ok.id) === ok;
+}
+async function announce(list) {
+  if (!ownerOk || !Array.isArray(list)) return;
+  for (const a of list.slice(0, MAX_ANNS)) if (await mergeAnn(a)) broadcast({ t: 'ann', ann: anns.get(a.id) });
+}
+
 // ──────────── Envelopes ────────────
 function deliver(id, env) {
   let q = queues.get(id);
@@ -140,6 +159,7 @@ function limited(st, t) {
 async function handle(ws, m) {
   // Owner requests (tools/owner.js) are signed with the owner key, so they need no login
   if (m.t === 'removals') return applyRemovals(m.removals);
+  if (m.t === 'announce') return announce([m.ann]);
   if (m.t === 'owner') {
     if (!ownerOk || !(await P.verify(OWNER_KEY, ['pwc-owner', ws.nonce], m.sig))) return send(ws, { t: 'denied', msg: 'Not the owner', why: 'owner' });
     return send(ws, { t: 'owner_dir', dir: [...members.values()].map(x => x.cert), removals: removals.v ? removals : null, online: [...online.keys()] });
@@ -148,6 +168,7 @@ async function handle(ws, m) {
     if (ws.member) return;
     if (!ownerOk) return deny(ws, 'This server has not been set up yet: it needs its OWNER_KEY.', 'setup');
     if (m.removals) await applyRemovals(m.removals);
+    if (m.ann) await announce(m.ann);
     const self = await checkCert(m.cert);
     if (!self || !self.by || P.isRemoved(self, removed)) return deny(ws, "This device isn't a member of this network. It may have been removed, or its invite was already used.", 'member');
     if (!(await P.verify(self.sig, ['pwc-auth', ws.nonce], m.sig))) return deny(ws, "Couldn't confirm this device's identity.", 'auth');
@@ -164,7 +185,7 @@ async function handle(ws, m) {
     ws.member = info; online.set(info.id, ws);
     send(ws, {
       t: 'welcome', id: info.id, dir: [...members.values()].map(x => x.cert),
-      removals: removals.v ? removals : null, online: [...online.keys()],
+      removals: removals.v ? removals : null, online: [...online.keys()], ann: [...anns.values()],
     });
     broadcast({ t: 'presence', id: info.id, on: true }, info.id);
     const t0 = now();

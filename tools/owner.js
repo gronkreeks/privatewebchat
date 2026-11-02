@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// Owner tool for privatewebchat: the only place invite codes are made and people are removed.
-// The owner key never leaves this computer. It lives in ~/.privatewebchat/owner.json (keep a
+// Owner tool for privatewebchat: makes invite codes, removes people and posts announcements (the app
+// can also make invite codes and post, on the computer that holds the owner key). The owner key never
+// leaves this computer. It lives in ~/.privatewebchat/owner.json (keep a
 // backup somewhere safe: without it you can't invite or remove anyone).
 //
 //   node tools/owner.js init                  make the owner key and print OWNER_KEY for Render
-//   node tools/owner.js key                   print OWNER_KEY again
+//   node tools/owner.js key                   print OWNER_KEY again (for Render, not an invite code)
+//   node tools/owner.js cert                  print OWNER_CERT, for app/ui/config.js
 //   node tools/owner.js invite [count] [days] print invite codes (default 1 code, valid 90 days)
 //   node tools/owner.js members               list everyone on the server
 //   node tools/owner.js remove <username>     remove someone from the server
+//   node tools/owner.js announce <file|text>  post in Announcements (Markdown: # headings, - bullets)
 //
 // Needs Node 22+. Talks to the server in app/ui/config.js (or the SERVER environment variable).
 'use strict';
@@ -24,6 +27,9 @@ function load() {
   try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); }
   catch (e) { die(`No owner key yet (${FILE}). Run: node tools/owner.js init`); }
 }
+// Short codes (PWC2.) need the app to know this owner's certificate (OWNER_CERT in config.js);
+// until it does, the long kind (PWC1.) is printed instead
+const knowsCert = owner => { const c = require('../app/ui/config.js').OWNER_CERT; return !!c && P.canon(c) === P.canon(owner.cert); };
 const encodeInvite = inv => 'PWC1.' + Buffer.from(JSON.stringify(inv)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 // Opens a connection, proves we hold the owner key, and returns the member list and removals
@@ -59,18 +65,37 @@ async function members(owner, session) {
     console.log(`Owner key saved to ${FILE}. Back this file up somewhere safe.\n`);
     console.log('In Render, open your service → Environment → add this variable, then save and deploy:\n');
     console.log(`  OWNER_KEY = ${keys.sigPub}\n`);
+    console.log("Then put the owner's certificate in app/ui/config.js so short invite codes work (node tools/owner.js cert).\n");
   } else if (cmd === 'key') {
     console.log(load().keys.sigPub);
+    console.error("\nThat's OWNER_KEY, for the server's settings in Render. It isn't an invite code: to join privatewebchat\n(you too), make one with: node tools/owner.js invite");
+  } else if (cmd === 'cert') {
+    const c = load().cert;
+    console.log(`  OWNER_CERT: ${JSON.stringify({ m: { name: c.m.name, sig: c.m.sig, ecdh: c.m.ecdh, at: c.m.at }, s: c.s })},`);
+    console.error('\nPut that line in app/ui/config.js (it only has public keys), then rebuild the app.');
   } else if (cmd === 'invite') {
     const owner = load();
     const count = Math.max(1, Math.min(200, parseInt(args[0] || '1', 10) || 1));
     const days = Math.max(1, Math.min(3650, parseFloat(args[1] || '90') || 90));
+    const short = knowsCert(owner);
     for (let i = 0; i < count; i++) {
-      const inv = await P.makeInvite(owner.cert, owner.keys, days * 24);
-      console.log(encodeInvite({ g: inv.g, k: inv.k }));
+      if (short) console.log(await P.makeShortInvite(owner.keys.sigPriv, days * 24));
+      else { const inv = await P.makeInvite(owner.cert, owner.keys, days * 24); console.log(encodeInvite({ g: inv.g, k: inv.k })); }
       if (i < count - 1) console.log('');
     }
-    console.error(`\n${count} invite code${count > 1 ? 's' : ''}, each works once and expires in ${days} days.`);
+    console.error(`\n${count} invite code${count > 1 ? 's' : ''}, each works once and expires in ${days} days. Paste it into privatewebchat's "Invite code" box.`);
+    if (!short) console.error("These are long codes because app/ui/config.js doesn't have this owner's certificate yet (node tools/owner.js cert).");
+  } else if (cmd === 'announce') {
+    const owner = load();
+    const what = args.join(' ').trim();
+    if (!what) die('Usage: node tools/owner.js announce <file or text>');
+    const text = fs.existsSync(what) ? fs.readFileSync(what, 'utf8').trim() : what;
+    if (text.length > P.MAX_ANN) die(`That's too long: announcements can be up to ${P.MAX_ANN} characters.`);
+    const s = await ownerSession(owner);
+    s.ws.send(JSON.stringify({ t: 'announce', ann: await P.signAnn(owner.keys.sigPriv, P.randomHex(8), Date.now(), text) }));
+    await new Promise(res => setTimeout(res, 800));
+    s.ws.close();
+    console.log('Posted in Announcements.');
   } else if (cmd === 'members') {
     const owner = load();
     const s = await ownerSession(owner);
@@ -92,6 +117,6 @@ async function members(owner, session) {
     s.ws.close();
     console.log(`Removed ${target.name}. They've been disconnected and their invite no longer works.`);
   } else {
-    console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 12).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
+    console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 14).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
   }
 })().catch(e => die(e.message));

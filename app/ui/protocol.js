@@ -113,6 +113,56 @@
   // Removing someone also removes everyone they invited
   const isRemoved = (info, removed) => removed.has(info.id) || info.chain.some(x => removed.has(x));
 
+  // ── Short invite codes ──
+  // PWC2.<16-byte seed><expiry in minutes, 4 bytes><owner's signature, 64 bytes>, base64url: 117
+  // characters instead of the 1000 of a PWC1 code. The invite key pair comes from the seed, and the
+  // owner's certificate comes from the app (config.js), so the code doesn't carry either. Accepting
+  // one gives exactly the same certificate as a PWC1 code.
+  const INVITE2 = 'PWC2.';
+  const b64url = bytes => toB64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const fromB64url = s => fromB64(s.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - s.length % 4) % 4));
+  const P256_N = 0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551n;
+  // A P-256 private key in PKCS#8 without its public half (WebCrypto works that out on import)
+  const PKCS8_HEAD = [0x30, 0x41, 0x02, 0x01, 0x00, 0x30, 0x13, 0x06, 0x07, 0x2a, 0x86, 0x48, 0xce, 0x3d, 0x02, 0x01, 0x06, 0x08,
+    0x2a, 0x86, 0x48, 0xce, 0x3d, 0x03, 0x01, 0x07, 0x04, 0x27, 0x30, 0x25, 0x02, 0x01, 0x01, 0x04, 0x20];
+  async function inviteKey(seed) {
+    const h = new Uint8Array(await subtle.digest('SHA-256', new Uint8Array([...te.encode('pwc-invite-key|'), ...seed])));
+    const d = BigInt('0x' + hex(h)) % (P256_N - 1n) + 1n;
+    const pkcs8 = new Uint8Array([...PKCS8_HEAD, ...(d.toString(16).padStart(64, '0').match(/../g).map(x => parseInt(x, 16)))]);
+    const jwk = await subtle.exportKey('jwk', await subtle.importKey('pkcs8', pkcs8, ECDSA, true, ['sign']));
+    return { ik: toB64(new Uint8Array([4, ...fromB64url(jwk.x), ...fromB64url(jwk.y)])), k: toB64(pkcs8) };
+  }
+  // ownerPriv is the owner's signing key (PKCS#8, base64). Expiry is rounded to the minute.
+  async function makeShortInvite(ownerPriv, hours) {
+    const seed = crypto.getRandomValues(new Uint8Array(16));
+    const mins = Math.floor((Date.now() + hours * 3600000) / 60000);
+    const { ik } = await inviteKey(seed);
+    const s = fromB64(await sign(ownerPriv, ['pwc-invite', ik, mins * 60000]));
+    return INVITE2 + b64url(new Uint8Array([...seed, mins >>> 24, (mins >>> 16) & 255, (mins >>> 8) & 255, mins & 255, ...s]));
+  }
+  // The same { g, k } a PWC1 code holds, or null. ownerCert is the owner's certificate from config.js.
+  async function readShortInvite(code, ownerCert) {
+    const s = String(code || '').replace(/\s+/g, '');
+    if (!s.startsWith(INVITE2) || !ownerCert || !/^[A-Za-z0-9_-]{112}$/.test(s.slice(INVITE2.length))) return null;
+    const b = fromB64url(s.slice(INVITE2.length));
+    const exp = (b[16] * 2 ** 24 + (b[17] << 16) + (b[18] << 8) + b[19]) * 60000;
+    const { ik, k } = await inviteKey(b.slice(0, 16));
+    return { g: { ik, exp, from: ownerCert, s: toB64(b.slice(20)) }, k };
+  }
+
+  // ── Announcements ──
+  // Posts in Announcements are signed with the owner key (only the developer can post) and aren't
+  // encrypted: everyone in the network reads them. Each app keeps them and hands them to the server
+  // when it connects, like removals, so they outlive server restarts. A post with empty text deletes
+  // the one with that id; the newest version of an id wins.
+  const MAX_ANN = 6000, ANN_ID = /^[0-9a-f]{16}$/;
+  async function signAnn(ownerPriv, id, at, text) { return { id, at, text, s: await sign(ownerPriv, ['pwc-ann', id, at, text]) }; }
+  async function checkAnn(a, owner) {
+    if (!a || typeof a !== 'object' || typeof a.id !== 'string' || !ANN_ID.test(a.id) || !Number.isSafeInteger(a.at) || a.at < 0 ||
+      typeof a.text !== 'string' || a.text.length > MAX_ANN) return null;
+    return (await verify(owner, ['pwc-ann', a.id, a.at, a.text], a.s)) ? { id: a.id, at: a.at, text: a.text, s: a.s } : null;
+  }
+
   // The owner's list of removed members. Every member's app keeps the newest one and hands it to
   // the server when it connects, so removals survive server restarts.
   async function signRemovals(keys, v, ids) { return { v, ids, s: await sign(keys.sigPriv, ['pwc-removed', v, ids]) }; }
@@ -162,6 +212,6 @@
   return {
     PUB, SIG, WRAPPED, IV, MAX_NAME, MAX_TEXT, ID_RE, USERNAME_RE, toB64, fromB64, isB64, canon, cleanName, randomHex,
     generateKeys, sign, verify, idOf, safetyNumber, ownerCert, makeInvite, acceptInvite, verifyCert, isRemoved,
-    signRemovals, checkRemovals, createBox,
+    signRemovals, checkRemovals, createBox, INVITE2, makeShortInvite, readShortInvite, MAX_ANN, signAnn, checkAnn,
   };
 });

@@ -25,10 +25,13 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 - **Friends**, added by username
 - **Direct messages** with friends, deleted automatically after 24 hours
 - **Group chats** with any of your friends
+- **Announcements**, news and patch notes from the developer (only the developer can post)
+- **Mentions**: type **@** and a name to ping someone; they get a notification, even in General
 - **Replies**: hover over a message and click **Reply** to quote it
 - **ASCII GIFs**: animated ASCII art from the **GIF** button, like a cat, a rocket or a dancing stick figure
 - **Automatic updates**: when privatewebchat opens and there's a new version, it installs it and shows what's new
-- **Desktop notifications** for DMs, groups and friend requests, even with the window closed: privatewebchat keeps running in the system tray (Windows) or the menu bar and Dock (Mac) until you choose Quit
+- **Desktop notifications** for DMs, groups, mentions, announcements and friend requests, even with the window closed: privatewebchat keeps running in the system tray (Windows) or the menu bar and Dock (Mac) until you choose Quit
+- **Opens when you log in** (turn it off in **Settings → Startup**). Opening it again while it's running brings back the window that's already open
 - **A PIN lock** every time you open the app
 - **A black-out key** that instantly turns the window black, until you type your PIN
 - **A wipe PIN** that erases everything on your computer
@@ -47,7 +50,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 2. Open it. On Mac, open the .dmg and drag privatewebchat into Applications. The first time, your computer will warn that the app isn't from an identified developer:
    - **Mac:** right-click the app → **Open** → **Open**. If there's no Open button, go to **System Settings → Privacy & Security** and click **Open Anyway**
    - **Windows:** **More info** → **Run anyway**
-3. Paste your invite code, then pick a username and a PIN.
+3. Paste your invite code (it starts with `PWC2.`), then pick a username and a PIN.
 
 ### Checking your download
 
@@ -64,7 +67,7 @@ Every time privatewebchat opens, it checks this repository's [Releases](../../re
 
 Versions 1.1.4 and older can't update themselves, and no longer work once 1.1.5 is out: they show a banner saying where to download the new version. Install it once by hand (you keep your username, PIN and friends, so no invite code is needed) and it takes care of itself after that.
 
-**Publishing an update** (developer): bump the version in `app/ui/config.js`, `app/mac/Info.plist`, `app/win/app.rc` and `app/build-mac.sh` (`node tests/version.test.js` checks they match), write the patch notes in `docs/releases/vX.Y.Z.md`, then push a tag: `git tag vX.Y.Z && git push origin vX.Y.Z`.
+**Publishing an update** (developer): bump the version in `app/ui/config.js`, `app/mac/Info.plist`, `app/win/app.rc` and `app/build-mac.sh` (`node tests/version.test.js` checks they match), write the patch notes in `docs/releases/vX.Y.Z.md`, then push a tag: `git tag vX.Y.Z && git push origin vX.Y.Z`. The patch notes are shown while the app updates, and posted in everyone's Announcements.
 
 ## End-to-end encryption
 
@@ -93,6 +96,10 @@ Change the look in **Settings → Appearance**. The default is **Kali**: black, 
 ## FAQ
 
 **How do I get an invite code?** Ask the developer. Each code works for one person.
+
+**I'm the developer. How do I get in?** The same way as everyone else: make yourself an invite code with `node tools/owner.js invite` and paste it into the app. The owner key (`node tools/owner.js key`, the one starting with `B`) only goes in the server's settings on Render, and it isn't an invite code. Once you're in on the computer that holds the owner key, **Settings → Owner** makes invite codes for you, and you can post in **Announcements**.
+
+**Are announcements encrypted?** No. Everyone in the network reads them, so they're signed with the owner key instead: nobody else, including the server, can post one or change one. Unlike messages, they stay when the server goes offline.
 
 **Can I change my username?** No. Usernames are permanent, so everyone knows who they're talking to.
 

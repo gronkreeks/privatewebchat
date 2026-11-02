@@ -1,5 +1,5 @@
-// privatewebchat app. Screens, the connection to the relay, friends, chats, settings, the black-out key and
-// the wipe PIN. Nothing about chats is stored on the server: General is everyone, direct messages
+// privatewebchat app. Screens, the connection to the relay, friends, chats, mentions, Announcements,
+// settings, the black-out key and the wipe PIN. Nothing about chats is stored on the server: General is everyone, direct messages
 // are between two friends, and a group chat's name and members travel inside its encrypted messages.
 // Friend requests are encrypted messages too.
 (() => {
@@ -19,6 +19,8 @@
     view: 'friends',    // 'friends' or a chat id
     ftab: 'online', status: 'offline', live: false,
     reply: null,        // { rid, mid, from, text } of the message being replied to
+    fg: null,           // whether the window is in use, as the app reports it (null: ask the page)
+    owner: false,       // this computer holds the network's owner key
   };
 
   // ──────────── Little helpers ────────────
@@ -50,7 +52,31 @@
     attention: () => window.pwc_attention(),
     panic: (code, on) => window.pwc_set_panic(code, on),
     notify: (title, body) => window.pwc_notify(title, body),
+    startup: async on => { try { return !!(await window.pwc_startup(on)); } catch (e) { return false; } },
+    ownerSecret: async () => { try { return await window.pwc_owner_secret(); } catch (e) { return null; } },
   };
+  // Whether privatewebchat is being looked at. The page can think it still has focus while the window
+  // is closed to the tray or behind other apps, so the app tells it (PwcFocus) and closing counts as away.
+  const focused = () => !S.away && (S.fg === null ? document.hasFocus() : S.fg);
+  window.PwcFocus = on => { S.fg = !!on; if (on) window.dispatchEvent(new Event('focus')); };
+  // Everyone who can be mentioned by @username, and what's been mentioned
+  const PING_RE = /(?<![\w@])@([A-Za-z0-9_.]{2,24})/g;
+  const idByName = n => { const l = n.toLowerCase(); const i = Object.values(S.info).find(x => x.name.toLowerCase() === l); return i ? i.id : null; };
+  // The person a mention means: a trailing full stop ends the sentence, not the name
+  const pinged = raw => { const id = idByName(raw); if (id) return [id, raw]; const n = raw.replace(/\.+$/, ''); return n.length >= 2 && idByName(n) ? [idByName(n), n] : [null, raw]; };
+  const pingsMe = text => [...String(text).matchAll(PING_RE)].some(m => pinged(m[1])[0] === D.me);
+  function withPings(text) {
+    const out = [];
+    let last = 0;
+    for (const m of text.matchAll(PING_RE)) {
+      const [id, name] = pinged(m[1]);
+      if (!id) continue;
+      out.push(text.slice(last, m.index), h('span', { class: 'ping' + (id === D.me ? ' me' : ''), text: '@' + name, onclick: () => profile(id) }));
+      last = m.index + 1 + name.length;
+    }
+    out.push(text.slice(last));
+    return out;
+  }
   function fmtTime(at) {
     const d = new Date(at), t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     return d.toDateString() === new Date().toDateString() ? t : d.toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }) + ', ' + t;
@@ -144,7 +170,7 @@
     try {
       const r = await fetch(`${PwcConfig.UPDATES}/${which}`, { signal: ctl.signal, cache: 'no-store', headers: { Accept: 'application/vnd.github+json' } });
       const j = r.ok ? await r.json() : null;
-      return j && typeof j.tag_name === 'string' && /^v\d+\.\d+\.\d+$/.test(j.tag_name) ? { tag: j.tag_name, version: j.tag_name.slice(1), notes: typeof j.body === 'string' ? j.body : '' } : null;
+      return j && typeof j.tag_name === 'string' && /^v\d+\.\d+\.\d+$/.test(j.tag_name) ? { tag: j.tag_name, version: j.tag_name.slice(1), notes: typeof j.body === 'string' ? j.body : '', at: Date.parse(j.published_at) || null } : null;
     } catch (e) { return null; } finally { clearTimeout(t); }
   }
   // Release notes are Markdown: headings, bullet points and paragraphs come through, everything as plain text
@@ -186,15 +212,21 @@
     await new Promise(res => { $('updSkip').onclick = res; });
     return false;
   }
-  // After an update, the first unlock shows what changed
+  // Each version's patch notes are posted in Announcements, and after an update the first unlock shows them
   async function whatsNew() {
-    const seen = D.settings.seenVersion;
-    if (seen === PwcConfig.VERSION) return;
-    D.settings.seenVersion = PwcConfig.VERSION; Vault.save();
-    if (seen && !newer(PwcConfig.VERSION, seen)) return;
+    const seen = D.settings.seenVersion, id = 'rel-v' + PwcConfig.VERSION;
+    const show = seen !== PwcConfig.VERSION && !(seen && !newer(PwcConfig.VERSION, seen));
+    if (seen !== PwcConfig.VERSION) { D.settings.seenVersion = PwcConfig.VERSION; Vault.save(); }
+    if (!show && D.ann[id]) return;
     const rel = await release('tags/v' + PwcConfig.VERSION);
-    if (!rel || !S.unlocked || S.black || !$('modal').classList.contains('hidden')) return;
-    modal(`What's new in privatewebchat ${rel.version}`, h('div', { class: 'notes' }, notesView(rel.notes)), closeBtn());
+    if (!rel || !S.unlocked) return;
+    if (!D.ann[id]) {
+      D.ann[id] = { id, at: rel.at || Date.now(), text: rel.notes.trim() || 'Bug fixes and improvements.', rel: rel.version };
+      annArrived(D.ann[id], false);
+    }
+    if (!show || S.black || !$('modal').classList.contains('hidden')) return;
+    modal(`What's new in privatewebchat ${rel.version}`, h('div', { class: 'notes' }, notesView(rel.notes)),
+      h('p', { class: 'hint', style: 'margin-top:0.8rem', text: 'You can read these again any time in Announcements.' }), closeBtn());
   }
 
   $('goneErase').onclick = () => ask('Erase this device?', 'This deletes everything privatewebchat has stored on this computer: your identity, messages and settings. It cannot be undone.', 'Erase', wipe, true);
@@ -230,9 +262,12 @@
   let pending = null;   // what setup will create once a PIN is chosen
   const usernameProblem = n => n.length < 2 ? 'Usernames need at least 2 characters' : !P.USERNAME_RE.test(n) ? 'Usernames can only use letters, numbers, _ and .' : null;
 
+  // Invite codes: PWC2. (short) or PWC1. (the long kind from before 1.1.6), see protocol.js
   const INVITE_PREFIX = 'PWC1.';
-  function parseInvite(text) {
+  const looksLikeCode = s => s.startsWith(INVITE_PREFIX) || s.startsWith(P.INVITE2);
+  async function parseInvite(text) {
     const s = String(text || '').replace(/\s+/g, '');
+    if (s.startsWith(P.INVITE2)) { try { return await P.readShortInvite(s, PwcConfig.OWNER_CERT); } catch (e) { return null; } }
     if (!s.startsWith(INVITE_PREFIX)) return null;
     try {
       const json = atob(s.slice(INVITE_PREFIX.length).replace(/-/g, '+').replace(/_/g, '/'));
@@ -252,13 +287,15 @@
   }
   let checked = null;   // { inv, owner } once the pasted code is valid
   $('joinCode').addEventListener('input', async () => {
-    const text = $('joinCode').value;
-    const inv = parseInvite(text);
+    const text = $('joinCode').value, s = text.replace(/\s+/g, '');
+    const inv = await parseInvite(text);
     const owner = inv && await checkInvite(inv);
     if (text !== $('joinCode').value) return;   // changed while checking
     checked = owner ? { inv, owner } : null;
     const expired = checked && inv.g.exp < Date.now();
-    err('joinErr', !text.trim() ? '' : !text.trim().startsWith(INVITE_PREFIX) ? `That's not an invite code. Invite codes start with ${INVITE_PREFIX}`
+    // The owner key (for Render) is easy to mistake for an invite code: it's what tools/owner.js key prints
+    err('joinErr', !s ? '' : P.isB64(s, P.PUB, P.PUB) && s[0] === 'B' ? "That's the owner key, which goes in the server's settings on Render. It isn't an invite code: make one with node tools/owner.js invite (that works for you too), then paste it here."
+      : !looksLikeCode(s) ? `That's not an invite code. Invite codes start with ${P.INVITE2}`
       : !checked ? "That invite code isn't valid. Make sure you copied all of it." : expired ? 'That invite code has expired. Ask for a new one.' : '');
     $('pasteRow').classList.toggle('hidden', !!checked);
     const show2 = !!checked && !expired;
@@ -317,7 +354,10 @@
   async function start() {
     D = Vault.data;
     D.friends = D.friends || {}; D.blocked = D.blocked || {}; D.outbox = D.outbox || {}; D.wanted = D.wanted || {};
+    D.ann = D.ann || {}; D.pings = D.pings || {};
+    if (!D.rooms.announcements) D.rooms.announcements = { id: 'announcements', kind: 'ann', name: 'Announcements' };
     if (D.settings.notify === undefined) { D.settings.notify = true; D.settings.previews = true; }
+    if (D.settings.startup === undefined) D.settings.startup = true;
     if (D.settings.panicCode === 'Tab') { D.settings.panicCode = 'Escape'; Vault.save(); }   // Tab moves between buttons, so it can't be the black-out key
     S.unlocked = true;
     if (D.server !== PwcConfig.SERVER) { D.server = PwcConfig.SERVER; Vault.save(); }
@@ -330,11 +370,16 @@
     pruneDms();
     await applyPanicKey();
     try { window.pwc_notify_setup(); } catch (e) { }
+    try { S.fg = !!(await window.pwc_focused()); } catch (e) { }
+    // Opening at login is set up again each time, so it follows the app if it moves
+    if (D.settings.startup) native.startup(true);
+    await checkOwner();
     show('sMain');
     render();
     connect();
     whatsNew();
   }
+  async function checkOwner() { try { S.owner = !!D && (await window.pwc_owner_key()) === D.owner; } catch (e) { S.owner = false; } }
   // Adds a member we've been told about, after checking their certificate ourselves
   async function learn(cert, quiet) {
     const info = await P.verifyCert(cert, D.owner);
@@ -444,7 +489,7 @@
         }
         S.boot = m.boot || null;
         if (S.boot && D.serverBoot !== S.boot) { if (D.serverBoot) clearHistory(); D.serverBoot = S.boot; await Vault.saveNow(); }
-        wsSend({ t: 'auth', v: PwcConfig.VERSION, cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals });
+        wsSend({ t: 'auth', v: PwcConfig.VERSION, cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals, ann: Object.values(D.ann).filter(a => a.s) });
         break;
       case 'welcome':
         retry = 1500;
@@ -452,6 +497,7 @@
         if ($('modalCard').dataset.kind === 'rename') closeModal();
         if (m.removals) await applyRemovals(m.removals);
         for (const c of m.dir || []) await learn(c, true);
+        for (const a of Array.isArray(m.ann) ? m.ann.slice(0, 200) : []) await takeAnn(a, false);
         S.online = new Set(m.online || []);
         S.live = true;
         setStatus('online');
@@ -466,6 +512,7 @@
         renderSidebar(); if (S.view === 'friends') renderFriends(); else renderHeader();
         break;
       case 'removals': await applyRemovals(m.removals); break;
+      case 'ann': await takeAnn(m.ann, true); break;
       case 'env': await receive(m); break;
       case 'sent': markSent(m.ref); break;
       case 'error': markFailed(m.ref); err('chatErr', m.msg); break;
@@ -597,11 +644,14 @@
     if (list.length > MAX_HISTORY) list.splice(0, list.length - MAX_HISTORY);
     const r = D.rooms[rid];
     if (!m.sys && m.from !== D.me) {
-      if (rid !== S.view || !document.hasFocus() || S.black) D.unread[rid] = (D.unread[rid] || 0) + 1;
-      // General is too busy to notify about, except when someone replies to you
-      if (r && (r.kind !== 'general' || (m.re && m.re.from === D.me))) {
+      const away = rid !== S.view || !focused() || S.black, ping = !m.gif && pingsMe(m.text);
+      if (away) { D.unread[rid] = (D.unread[rid] || 0) + 1; if (ping) D.pings[rid] = true; }
+      // General is too busy to notify about, except when someone mentions you or replies to you
+      if (r && (r.kind !== 'general' || ping || (m.re && m.re.from === D.me))) {
         const who = nameOf(m.from);
-        notify(r.kind === 'dm' ? who : r.kind === 'general' ? `${who} replied to you in General` : `${who} in ${r.name}`, D.settings.previews ? m.text.slice(0, 160) : r.kind === 'dm' ? 'Sent you a message' : 'New message');
+        const where = r.kind === 'general' ? 'General' : r.name;
+        notify(r.kind === 'dm' ? who : ping ? `${who} mentioned you in ${where}` : r.kind === 'general' ? `${who} replied to you in General` : `${who} in ${r.name}`,
+          D.settings.previews ? m.text.slice(0, 160) : r.kind === 'dm' ? 'Sent you a message' : 'New message');
       }
     }
     Vault.save();
@@ -631,9 +681,55 @@
   // Desktop notifications, only while privatewebchat is in the background and never while blacked out,
   // except when the window was closed to the tray / menu bar (S.away)
   function notify(title, body) {
-    if (!D.settings.notify || (S.black && !S.away) || document.hasFocus()) return;
+    if (!D.settings.notify || (S.black && !S.away) || focused()) return;
     native.notify(title, body);
     native.attention();
+  }
+
+  // ──────────── Announcements ────────────
+  // The developer's posts (signed with the owner key, see protocol.js) and each version's patch notes
+  // (rel-vX.Y.Z, from GitHub). Kept in D.ann, not with the messages, so a server restart doesn't delete them.
+  const ownerName = () => (D.cert.by && D.cert.by.from && D.cert.by.from.m && D.cert.by.from.m.name) || 'developer';
+  const firstLine = text => text.split('\n').map(l => l.replace(/^#+\s*|^[-*+]\s+|\*\*|__|`/g, '').trim()).find(Boolean) || '';
+  function annArrived(a, live) {
+    if (S.view !== 'announcements' || !focused() || S.black) D.unread.announcements = (D.unread.announcements || 0) + 1;
+    if (live) notify(`Announcement from ${ownerName()}`, D.settings.previews ? firstLine(a.text).slice(0, 160) : 'New announcement');
+    Vault.save();
+    renderSidebar();
+    if (S.view === 'announcements') renderLog();
+  }
+  async function takeAnn(a, live) {
+    const ok = await P.checkAnn(a, D.owner);
+    const cur = ok && D.ann[ok.id];
+    if (!ok || (cur && cur.at >= ok.at)) return;
+    D.ann[ok.id] = ok;
+    // The newest 100 posts are kept
+    const posts = Object.values(D.ann).filter(x => x.s).sort((x, y) => y.at - x.at);
+    for (const x of posts.slice(100)) delete D.ann[x.id];
+    if (ok.text && !cur) annArrived(ok, live);
+    else { Vault.save(); if (S.view === 'announcements') renderLog(); }
+  }
+  // Only on the computer with the owner key. Empty text deletes the post with that id.
+  async function postAnn(text, id) {
+    if (S.status !== 'online') { err('chatErr', 'Not connected right now. Try again in a moment.'); return false; }
+    const key = await native.ownerSecret();
+    const a = key && await P.signAnn(key, id || P.randomHex(8), Date.now(), text).catch(() => null);
+    if (!a || !(await P.checkAnn(a, D.owner))) { err('chatErr', "This computer doesn't have this network's owner key, so it can't post here."); return false; }
+    D.ann[a.id] = a; Vault.save();
+    wsSend({ t: 'announce', ann: a });
+    err('chatErr', '');
+    renderLog();
+    return true;
+  }
+  function renderAnn() {
+    const log = $('log');
+    const list = Object.values(D.ann).filter(a => a.text).sort((a, b) => a.at - b.at);
+    log.replaceChildren(h('div', { class: 'sys', text: `News from ${ownerName()}, and the patch notes for every update. Only ${ownerName()} can post here. Posts are signed so nobody else can fake one, and everyone in the network can read them.` }),
+      ...list.map(a => h('div', { class: 'ann' + (a.rel ? ' rel' : '') },
+        h('div', { class: 'ann-h' }, h('b', { text: a.rel ? `privatewebchat ${a.rel}` : ownerName() }), h('span', { class: 'tagline', text: a.rel ? 'Patch notes' : 'Announcement' }), h('time', { text: fmtTime(a.at) }),
+          S.owner && a.s ? h('button', { class: 'rbtn', onclick: () => ask('Delete this announcement?', 'It disappears for everyone.', 'Delete', () => postAnn('', a.id), true) }, 'Delete') : null),
+        h('div', { class: 'notes' }, notesView(a.text)))));
+    log.scrollTop = log.scrollHeight;
   }
 
   // ──────────── Friends ────────────
@@ -748,15 +844,18 @@
     const at = Date.now(), text = 'The server went offline, so every message was deleted. Messages only last while the server is running.';
     const old = D.msgs;
     D.msgs = {}; D.unread = {}; D.outbox = {}; sentRefs.clear();
-    for (const id of Object.keys(D.rooms)) D.msgs[id] = [{ sys: true, text, at }, ...(old[id] || []).filter(m => waiting.has(m.mid))];
+    D.pings = {};
+    for (const id of Object.keys(D.rooms)) if (D.rooms[id].kind !== 'ann') D.msgs[id] = [{ sys: true, text, at }, ...(old[id] || []).filter(m => waiting.has(m.mid))];
     render();
   }
   async function sendMsg() {
     const text = $('msg').value.replace(/\s+$/, '').replace(/^\n+/, '');
     if (!text.trim()) return;
     const r = D.rooms[S.view];
-    if (!r || !post(r, { text: text.slice(0, P.MAX_TEXT) })) return;
-    $('msg').value = ''; grow(); left();
+    if (!r) return;
+    if (r.kind === 'ann') { if (!S.owner || !(await postAnn(text.slice(0, P.MAX_ANN)))) return; }
+    else if (!post(r, { text: text.slice(0, P.MAX_TEXT) })) return;
+    $('msg').value = ''; grow(); left(); closePings();
   }
   // Adds a message to the chat and sends it. If the server is down it waits, marked "Connecting…".
   function post(r, body) {
@@ -812,21 +911,25 @@
     if (S.view === 'friends') renderFriends();
     else { renderHeader(); renderLog(); renderComposer(); }
   }
-  const chatName = r => r.kind === 'general' ? 'General' : r.kind === 'dm' ? nameOf(r.with) : r.name;
+  const chatName = r => r.kind === 'general' ? 'General' : r.kind === 'ann' ? 'Announcements' : r.kind === 'dm' ? nameOf(r.with) : r.name;
   const lastAt = r => { const l = D.msgs[r.id]; return l && l.length ? l[l.length - 1].at : (r.rv || 0); };
   function updateTitle() {
     if (S.black) return native.title('privatewebchat');
     const n = Object.values(D.unread).reduce((a, b) => a + b, 0) + Object.values(D.friends).filter(x => x === 'incoming').length;
     native.title(n ? `privatewebchat (${n})` : 'privatewebchat');
   }
-  const badge = (el, n) => { el.textContent = n > 99 ? '99+' : n; el.classList.toggle('hidden', !n); };
+  // A mention shows as @ in front of the count
+  const badge = (el, n, ping) => { el.textContent = (ping ? '@ ' : '') + (n > 99 ? '99+' : n); el.classList.toggle('hidden', !n); el.classList.toggle('ping', !!ping); };
+  function seen(rid) { delete D.unread[rid]; delete D.pings[rid]; }
   function renderSidebar() {
     if (!S.unlocked) return;
     $('navFriends').classList.toggle('on', S.view === 'friends');
     $('navGeneral').classList.toggle('on', S.view === 'general');
+    $('navAnn').classList.toggle('on', S.view === 'announcements');
     const incoming = Object.values(D.friends).filter(x => x === 'incoming').length;
     badge($('friendsBadge'), incoming);
-    badge($('generalBadge'), D.unread.general || 0);
+    badge($('generalBadge'), D.unread.general || 0, D.pings.general);
+    badge($('annBadge'), D.unread.announcements || 0);
     // The inbox: direct messages with friends (or with past messages) and group chats, newest first
     const chats = Object.values(D.rooms).filter(r => r.kind === 'group' || (r.kind === 'dm' && (isFriend(r.with) || (D.msgs[r.id] || []).length)))
       .sort((a, b) => lastAt(b) - lastAt(a));
@@ -835,7 +938,7 @@
       return h('button', { class: 'item' + (r.id === S.view ? ' on' : ''), onclick: () => openRoom(r.id) },
         r.kind === 'dm' ? avatar(r.with, 'sm', true) : groupAvatar(r, 'sm'),
         h('span', { class: 'grow' }, h('span', { class: 'nm', text: chatName(r) }), r.kind === 'group' ? h('span', { class: 'sub2', text: `${r.members.length} members` }) : null),
-        n ? h('span', { class: 'badge', text: n > 99 ? '99+' : n }) : null);
+        n ? h('span', { class: 'badge' + (D.pings[r.id] ? ' ping' : ''), text: (D.pings[r.id] ? '@ ' : '') + (n > 99 ? '99+' : n) }) : null);
     }) : [h('p', { class: 'hint', style: 'padding: 0.3rem 0.55rem', text: 'Your direct messages and group chats show up here.' })]));
     updateTitle();
   }
@@ -844,6 +947,7 @@
   for (const t of document.querySelectorAll('.tab')) t.onclick = () => { S.ftab = t.dataset.tab; renderFriends(); };
   $('navFriends').onclick = () => openFriends();
   $('navGeneral').onclick = () => openRoom('general');
+  $('navAnn').onclick = () => openRoom('announcements');
   function openFriends(tab) { S.view = 'friends'; if (tab) S.ftab = tab; err('chatErr', ''); render(); }
   function personRow(id, sub, actions) {
     return h('div', { class: 'frow', onclick: e => { if (!e.target.closest('button')) profile(id); } },
@@ -940,17 +1044,20 @@
     const count = Object.keys(S.info).length;
     $('roomAv').replaceChildren(r.kind === 'dm' ? avatar(r.with, '', true) : r.kind === 'group' ? groupAvatar(r) : '');
     $('roomTitle').textContent = (r.kind === 'general' ? '# ' : '') + chatName(r);
+    $('roomLock').textContent = r.kind === 'ann' ? `Signed by ${ownerName()}` : 'End-to-end encrypted';
     $('roomSub').textContent = r.kind === 'general' ? `Everyone · ${count} ${count === 1 ? 'member' : 'members'}`
+      : r.kind === 'ann' ? 'News and patch notes'
       : r.kind === 'dm' ? (isOnline(r.with) ? 'Online' : 'Offline') + ' · messages disappear after 24 hours'
       : r.members.map(nameOf).join(', ');
     const a = $('roomAction');
-    a.classList.toggle('hidden', r.kind === 'general');
+    a.classList.toggle('hidden', r.kind === 'general' || r.kind === 'ann');
     a.textContent = r.kind === 'group' ? 'Group settings' : 'Profile';
     a.onclick = () => r.kind === 'group' ? groupSettings() : profile(r.with);
   }
   let shownAll = false;
   function renderLog() {
     if (!S.unlocked || S.black || S.view === 'friends') return;
+    if (D.rooms[S.view] && D.rooms[S.view].kind === 'ann') return renderAnn();
     const log = $('log');
     log.innerHTML = '';
     const list = D.msgs[S.view] || [];
@@ -970,10 +1077,10 @@
     if (m.sys) line = h('div', { class: 'sys', text: m.text });
     else {
       const mine = m.from === D.me, nm = nameOf(m.from), gif = m.gif && PwcGifs.byId[m.gif];
-      line = h('div', { class: 'm' + (mine ? ' me' : '') + (m.st === 'pending' ? ' pending' : ''), 'data-mid': m.mid },
+      line = h('div', { class: 'm' + (mine ? ' me' : '') + (m.st === 'pending' ? ' pending' : '') + (!mine && !gif && pingsMe(m.text) ? ' pinged' : ''), 'data-mid': m.mid },
         m.re ? h('div', { class: 're', title: 'Show the original message', onclick: () => jumpTo(m.re.mid) }, h('span', { class: 'rn', text: nameOf(m.re.from) }), h('span', { class: 'rt', text: m.re.text })) : null,
         h('time', { text: fmtTime(m.at) }), h('b', { text: nm, style: `--h: ${hue(nm)}`, onclick: () => profile(m.from) }),
-        gif ? null : m.text,
+        gif ? null : withPings(m.text),
         m.st === 'pending' ? h('span', { class: 'conn', text: 'Connecting…' }) : null,
         m.st === 'failed' ? h('button', { class: 'fail', title: 'Send again', onclick: () => { m.st = 'pending'; renderLog(); deliver(D.rooms[S.view], m); } }, 'Not sent · Retry') : null,
         m.mid ? h('button', { class: 'rbtn', title: 'Reply', onclick: () => startReply(m) }, 'Reply') : null,
@@ -1029,13 +1136,21 @@
     if (!S.unlocked) return;
     const r = D.rooms[S.view];
     if (!r) return;
+    // Announcements: only the developer gets a message box
+    const ann = r.kind === 'ann';
+    $('composer').classList.toggle('hidden', ann && !S.owner);
+    $('annLocked').classList.toggle('hidden', !ann || S.owner);
+    $('annLocked').textContent = `Only ${ownerName()} can post in Announcements.`;
+    $('gifBtn').classList.toggle('hidden', ann);
+    $('msg').maxLength = ann ? P.MAX_ANN : P.MAX_TEXT;
     const locked = r.kind === 'dm' && !isFriend(r.with);
     $('msg').disabled = locked;
     $('msg').placeholder = locked ? `You can only message friends. Add ${nameOf(r.with)} as a friend to keep chatting.`
-      : r.kind === 'dm' ? `Message @${nameOf(r.with)}` : r.kind === 'general' ? 'Message #General' : `Message ${r.name}`;
+      : ann ? 'Post an announcement for everyone (# headings and - bullet points work; Shift+Enter for a new line)'
+      : r.kind === 'dm' ? `Message @${nameOf(r.with)}` : r.kind === 'general' ? 'Message #General (type @ to mention someone)' : `Message ${r.name}`;
     $('sendBtn').disabled = $('gifBtn').disabled = locked || stopped;
     renderReply();
-    const path = r.kind === 'general' ? 'general' : r.kind === 'dm' ? 'dm/' + nameOf(r.with) : r.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const path = r.kind === 'general' ? 'general' : ann ? 'announcements' : r.kind === 'dm' ? 'dm/' + nameOf(r.with) : r.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     $('promptTop').replaceChildren('┌──(', h('b', { class: 'pu', text: `${nameOf(D.me)}㉿privatewebchat` }), ')-[', h('b', { class: 'pp', text: '~/' + path }), ']');
   }
   function openRoom(id) {
@@ -1043,21 +1158,52 @@
     pruneDms();
     if (id !== S.view) S.reply = null;
     S.view = id; shownAll = false;
-    delete D.unread[id];
+    seen(id);
     Vault.save();
     err('chatErr', '');
-    closeModal();
+    closeModal(); closePings();
     render();
     if (!$('msg').disabled) $('msg').focus();
+    if (D.rooms[id].kind === 'ann') checkOwner().then(() => { if (S.view === id) { renderComposer(); renderLog(); } });
   }
   window.addEventListener('focus', () => { if (S.black) $('blackPin').focus(); });
-  window.addEventListener('focus', () => { if (S.unlocked && !S.black && D.unread[S.view]) { delete D.unread[S.view]; Vault.save(); renderSidebar(); } });
+  window.addEventListener('focus', () => { if (S.unlocked && !S.black && D.unread[S.view] && focused()) { seen(S.view); Vault.save(); renderSidebar(); } });
 
   // ── Composer ──
   const grow = () => { const t = $('msg'); t.style.height = 'auto'; t.style.height = Math.min(140, t.scrollHeight) + 'px'; };
-  const left = () => { const n = P.MAX_TEXT - $('msg').value.length; $('msgLeft').textContent = n <= 200 ? n : ''; $('msgLeft').classList.toggle('low', n <= 30); };
-  $('msg').addEventListener('input', () => { grow(); left(); });
+  const left = () => { const n = $('msg').maxLength - $('msg').value.length; $('msgLeft').textContent = n <= 200 ? n : ''; $('msgLeft').classList.toggle('low', n <= 30); };
+  // ── Mentions: typing @ lists the people in this chat; ↑ ↓ to choose, Tab or Enter to pick ──
+  let pingOpts = [], pingSel = 0;
+  function pingCandidates(r) {
+    const ids = r.kind === 'general' ? Object.keys(S.info) : r.kind === 'dm' ? [r.with] : r.kind === 'group' ? r.members : [];
+    return ids.filter(id => id !== D.me && S.info[id] && !D.blocked[id]);
+  }
+  function renderPings() {
+    const r = S.unlocked && D.rooms[S.view], t = $('msg');
+    const q = r && t.selectionStart === t.selectionEnd ? (t.value.slice(0, t.selectionStart).match(/(?:^|[\s(])@([A-Za-z0-9_.]{0,24})$/) || [])[1] : undefined;
+    pingOpts = q === undefined ? [] : pingCandidates(r).filter(id => nameOf(id).toLowerCase().startsWith(q.toLowerCase()))
+      .sort((a, b) => (isOnline(b) - isOnline(a)) || nameOf(a).localeCompare(nameOf(b))).slice(0, 6);
+    if (pingSel >= pingOpts.length) pingSel = 0;
+    $('pingList').classList.toggle('hidden', !pingOpts.length);
+    $('pingList').replaceChildren(...pingOpts.map((id, i) => h('button', { class: 'ping-opt' + (i === pingSel ? ' on' : ''), role: 'option', tabindex: '-1', onmousedown: e => { e.preventDefault(); pickPing(id); } },
+      avatar(id, 'sm', true), h('span', { class: 'nm', text: nameOf(id) }), h('small', { text: isOnline(id) ? 'Online' : 'Offline' }))));
+  }
+  function pickPing(id) {
+    const t = $('msg'), pos = t.selectionStart, before = t.value.slice(0, pos).replace(/@[A-Za-z0-9_.]*$/, '@' + nameOf(id) + ' ');
+    t.value = before + t.value.slice(pos);
+    t.selectionStart = t.selectionEnd = before.length;
+    closePings(); grow(); left(); t.focus();
+  }
+  function closePings() { pingOpts = []; $('pingList').classList.add('hidden'); }
+  $('msg').addEventListener('input', () => { grow(); left(); renderPings(); });
+  $('msg').addEventListener('click', renderPings);
+  $('msg').addEventListener('blur', closePings);
   $('msg').addEventListener('keydown', e => {
+    if (pingOpts.length && !e.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); pingSel = (pingSel + (e.key === 'ArrowDown' ? 1 : pingOpts.length - 1)) % pingOpts.length; renderPings(); return; }
+      if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') { e.preventDefault(); pickPing(pingOpts[pingSel]); return; }
+      if (e.key === 'Escape') { closePings(); return; }
+    }
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendMsg(); }
     else if (e.key === 'Escape' && S.reply) cancelReply();   // unless Esc is the black-out key, which comes first
   });
@@ -1185,6 +1331,19 @@
     const previewBox = h('input', { type: 'checkbox', checked: st.previews });
     notifyBox.onchange = () => { st.notify = notifyBox.checked; Vault.save(); };
     previewBox.onchange = () => { st.previews = previewBox.checked; Vault.save(); };
+    const mac = /Mac/.test(navigator.userAgent);
+    const testNote = h('p', { class: 'hint hidden', style: 'margin:0.5rem 0 0' }, mac
+      ? 'Nothing showed up? Open System Settings → Notifications → privatewebchat and turn on Allow notifications, and check Focus is off.'
+      : 'Nothing showed up? Open Settings → System → Notifications, turn on notifications for privatewebchat, and check Do not disturb is off.');
+    const testBtn = h('button', { class: 'link', onclick: () => { native.notify('privatewebchat', "Notifications are working. You'll get these while privatewebchat is in the background."); testNote.classList.remove('hidden'); } }, 'Send a test notification');
+    const startBox = h('input', { type: 'checkbox', checked: st.startup !== false });
+    const startNote = h('div', { class: 'err' });
+    startBox.onchange = async () => {
+      st.startup = startBox.checked; Vault.save();
+      const ok = await native.startup(st.startup);
+      startNote.className = 'err' + (ok ? ' ok' : '');
+      startNote.textContent = ok ? 'Saved' : mac ? "privatewebchat can only open at login from your Applications folder. Drag it there from the disk image, then open it from there." : "Windows wouldn't let privatewebchat set that up.";
+    };
 
     // PIN fields
     const pinIn = ph => { const i = h('input', { class: 'in pin', type: 'password', inputmode: 'numeric', maxlength: 12, autocomplete: 'off', placeholder: ph }); digitsOnly(i); return i; };
@@ -1236,8 +1395,13 @@
       h('div', { class: 'row' }, h('button', { class: 'link', onclick: () => setWipe(w1.value) }, 'Set wipe PIN'), h('button', { class: 'link', onclick: () => setWipe(null) }, 'Turn off')),
 
       h('h3', { text: 'Notifications' }),
-      h('label', { class: 'check' }, notifyBox, 'Desktop notifications for direct messages, group chats and friend requests while privatewebchat is in the background'),
+      h('label', { class: 'check' }, notifyBox, 'Desktop notifications for direct messages, group chats, mentions, announcements and friend requests while privatewebchat is in the background'),
       h('label', { class: 'check' }, previewBox, 'Show message text in notifications'),
+      h('div', { class: 'row', style: 'margin-top:0.4rem' }, testBtn), testNote,
+
+      h('h3', { text: 'Startup' }),
+      h('label', { class: 'check' }, startBox, h('span', {}, 'Open privatewebchat when you log in to your computer', h('small', { class: 'hint', style: 'display:block;margin:0' }, 'It opens to the PIN screen. Closing the window keeps it running for notifications.'))),
+      startNote,
 
       h('h3', { text: 'PIN' }),
       cur1, h('div', { class: 'row' }, new1, new2), pinNote,
@@ -1251,8 +1415,8 @@
 
       ownerKey === D.owner ? [
         h('h3', { text: 'Owner' }),
-        h('p', { class: 'hint' }, 'This computer holds the owner key, so you can see the terminal commands for invites, members and the server.'),
-        h('div', { class: 'row', style: 'margin-top:0' }, h('button', { class: 'link', onclick: ownerCommands }, 'Owner commands')),
+        h('p', { class: 'hint' }, 'This computer holds the owner key, so you can make invite codes, post in Announcements, and see the terminal commands for members and the server.'),
+        h('div', { class: 'row', style: 'margin-top:0' }, h('button', { class: 'link', onclick: ownerCommands }, 'Invite codes and owner commands')),
       ] : null,
 
       h('h3', { text: 'Erase' }),
@@ -1270,12 +1434,41 @@
     modal('Owner commands', h('p', { class: 'hint', text: 'Enter your PIN to see them.' }), pin, note, h('div', { class: 'row end' }, go));
     setTimeout(() => pin.focus(), 0);
   }
+  // An invite code made right here with the owner key: short (PWC2.) when this version of the app knows
+  // the owner's certificate, otherwise the long kind
+  async function makeInviteCode(days) {
+    const key = await native.ownerSecret();
+    if (!key) return null;
+    const oc = PwcConfig.OWNER_CERT && PwcConfig.OWNER_CERT.m && PwcConfig.OWNER_CERT.m.sig === D.owner ? PwcConfig.OWNER_CERT : D.cert.by.from;
+    if (oc === PwcConfig.OWNER_CERT) return P.makeShortInvite(key, days * 24);
+    const inv = await P.makeInvite(oc, { sigPriv: key }, days * 24);
+    return INVITE_PREFIX + btoa(JSON.stringify({ g: inv.g, k: inv.k })).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
   function showOwnerCommands() {
     const host = D.server.replace(/^wss?:\/\//, '').replace(/\/.*$/, '');
+    const codeBox = h('div', { class: 'box mono hidden', style: 'flex:1;min-width:0;overflow-wrap:anywhere;padding:0.45rem 0.7rem' });
+    const codeNote = h('div', { class: 'err' });
+    const copyCode = h('button', { class: 'link hidden', onclick: () => { copy(codeBox.textContent); copyCode.textContent = 'Copied'; setTimeout(() => { copyCode.textContent = 'Copy'; }, 1500); } }, 'Copy');
+    const make = h('button', {
+      class: 'btn', onclick: async () => {
+        make.disabled = true;
+        let code = null;
+        try { code = await makeInviteCode(90); } catch (e) { }
+        make.disabled = false;
+        if (!code) { codeNote.className = 'err'; codeNote.textContent = "Couldn't read the owner key on this computer."; return; }
+        codeBox.textContent = code;
+        codeBox.classList.remove('hidden'); copyCode.classList.remove('hidden');
+        codeNote.className = 'err ok'; codeNote.textContent = 'Works once and lasts 90 days. Send it to the person you want to invite, or paste it into privatewebchat yourself on another computer.';
+        make.textContent = 'Make another';
+      },
+    }, 'Make an invite code');
     const groups = [
-      ['Invites', [
-        ['Make one invite code (works once, lasts 90 days)', 'node tools/owner.js invite'],
+      ['Invites in Terminal', [
+        ['Make one invite code (works once, lasts 90 days). Use this for yourself too: the owner key never logs in, you join with an invite like everyone else', 'node tools/owner.js invite'],
         ['Make 5 codes that last 30 days', 'node tools/owner.js invite 5 30'],
+      ]],
+      ['Announcements', [
+        ['Post the patch notes for a version (or just open Announcements and type)', 'node tools/owner.js announce docs/releases/v' + PwcConfig.VERSION + '.md'],
       ]],
       ['Members', [
         ["See who's in the network (● online, ○ offline)", 'node tools/owner.js members'],
@@ -1284,7 +1477,7 @@
       ['Server', [
         ['Check the live server end to end (two test members join, swap a message and are removed)', 'node tools/livetest.js'],
         ["Quick check that the server's up", `curl https://${host}/health`],
-        ['Print OWNER_KEY again, for Render', 'node tools/owner.js key'],
+        ["Print OWNER_KEY for Render's settings (starts with B; it's not an invite code)", 'node tools/owner.js key'],
         ['Test a network (open this page in a browser on that network)', 'open tools/nettest.html'],
       ]],
       ['App', [
@@ -1293,7 +1486,10 @@
       ]],
     ];
     modal('Owner commands',
-      h('p', { class: 'hint' }, 'Run these in Terminal from the privatewebchat folder (', h('b', { text: 'cd ~/hush' }), '). The owner key is ~/.privatewebchat/owner.json: keep a backup of it somewhere safe.'),
+      h('h3', { text: 'Invite someone' }),
+      h('div', { class: 'row', style: 'margin-top:0' }, codeBox, copyCode), codeNote,
+      h('div', { class: 'row', style: 'margin-top:0.3rem' }, make),
+      h('p', { class: 'hint', style: 'margin-top:1.2rem' }, 'Or run these in Terminal from the privatewebchat folder (', h('b', { text: 'cd ~/hush' }), '). The owner key is ~/.privatewebchat/owner.json: keep a backup of it somewhere safe.'),
       groups.map(([title, cmds]) => [h('h3', { text: title }), cmds.map(([what, cmd]) => {
         const btn = h('button', { class: 'link', onclick: () => { copy(cmd); btn.textContent = 'Copied'; setTimeout(() => { btn.textContent = 'Copy'; }, 1500); } }, 'Copy');
         return [h('p', { class: 'hint', style: 'margin:0.8rem 0 0.25rem', text: what }), h('div', { class: 'row', style: 'margin-top:0' }, h('div', { class: 'box mono', style: 'flex:1;min-width:0;overflow-wrap:anywhere;padding:0.45rem 0.7rem', text: cmd }), btn)];
@@ -1322,7 +1518,7 @@
     S.black = false; S.away = false;
     $('black').classList.add('hidden');
     $('app').classList.remove('hidden');
-    if (D.unread[S.view] && document.hasFocus()) delete D.unread[S.view];
+    if (D.unread[S.view] && focused()) seen(S.view);
     render();
     if (S.view !== 'friends') $('msg').focus();
   }

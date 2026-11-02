@@ -4,8 +4,11 @@
 // function that sends a process message here, and this side answers by running JS in the page.
 // Only pages under the UI's own address (127.0.0.1, random port, secret path) get the bindings
 // or can be navigated to. Also plat_close_to_tray from platform.h: closing the window hides it and
-// the app carries on from the menu bar and Dock until Quit.
+// the app carries on from the menu bar and Dock until Quit. And plat_focused / plat_on_focus, and the
+// Notification Center delegate: banners show even while privatewebchat is the frontmost app, and
+// clicking one brings the window back.
 #import <Cocoa/Cocoa.h>
+#import <UserNotifications/UserNotifications.h>
 #include <crt_externs.h>
 #include <string>
 #include <vector>
@@ -27,6 +30,8 @@ NSWindow *window;
 CefRefPtr<CefBrowser> browser;
 bool closing, quitting;
 void (*hide_fn)(void);
+void (*focus_fn)(int);
+int focus_was = -1;
 NSStatusItem *tray;
 
 std::string json_str(const std::string &s) {
@@ -109,11 +114,19 @@ class Client : public CefClient, public CefLifeSpanHandler, public CefRequestHan
   IMPLEMENT_REFCOUNTING(Client);
 };
 
+void show_window();   // below, once the window delegate is defined
+
 class App : public CefApp, public CefBrowserProcessHandler {
  public:
   CefRefPtr<CefBrowserProcessHandler> GetBrowserProcessHandler() override { return this; }
+  // privatewebchat opened again while it's running (another copy of the app, or the program started by
+  // hand): bring back this window. Left to CEF, it opens a plain Chrome window, which asks macOS to make
+  // privatewebchat the default web browser.
+  bool OnAlreadyRunningAppRelaunch(CefRefPtr<CefCommandLine>, const CefString &) override { show_window(); return true; }
   void OnBeforeCommandLineProcessing(const CefString &, CefRefPtr<CefCommandLine> cl) override {
     cl->AppendSwitch("use-mock-keychain");          // Chromium's own Keychain item isn't needed: nothing is stored
+    cl->AppendSwitch("no-default-browser-check");   // it isn't a web browser
+    cl->AppendSwitch("no-first-run");
     cl->AppendSwitch("disable-background-networking");
     cl->AppendSwitch("disable-component-update");
     // Keeps the page connected and notifying at full speed while the window is closed to the menu bar
@@ -157,7 +170,16 @@ CefRefPtr<Client> client;
 }
 @end
 
-@interface PwcWindowDelegate : NSObject <NSWindowDelegate, NSApplicationDelegate>
+static bool focused_now() { return NSApp.isActive && window.isVisible && window.isKeyWindow && !window.isMiniaturized && !NSApp.isHidden; }
+// The page doesn't hear about this by itself (Chromium keeps its focus while the window is hidden)
+static void report_focus() {
+  int f = focused_now();
+  if (f == focus_was || !focus_fn) return;
+  focus_was = f;
+  focus_fn(f);
+}
+
+@interface PwcWindowDelegate : NSObject <NSWindowDelegate, NSApplicationDelegate, UNUserNotificationCenterDelegate>
 @end
 @implementation PwcWindowDelegate
 - (BOOL)windowShouldClose:(NSWindow *)w {
@@ -165,6 +187,7 @@ CefRefPtr<Client> client;
     hide_fn();
     [w orderOut:nil];
     [NSApp hide:nil];   // so the app isn't frontmost, and notifications show
+    report_focus();
     return NO;
   }
   if (browser && !closing) { closing = true; browser->GetHost()->CloseBrowser(false); return NO; }
@@ -186,13 +209,30 @@ CefRefPtr<Client> client;
     browser->GetHost()->SetFocus(true);
   }
 }
-- (void)applicationDidBecomeActive:(NSNotification *)n { if (!quitting && !window.visible) [self show:nil]; }
+- (void)applicationDidBecomeActive:(NSNotification *)n { if (!quitting && !window.visible) [self show:nil]; report_focus(); }
+- (void)applicationDidResignActive:(NSNotification *)n { report_focus(); }
+- (void)applicationDidHide:(NSNotification *)n { report_focus(); }
+- (void)windowDidBecomeKey:(NSNotification *)n { report_focus(); }
+- (void)windowDidResignKey:(NSNotification *)n { report_focus(); }
+- (void)windowDidMiniaturize:(NSNotification *)n { report_focus(); }
+- (void)windowDidDeminiaturize:(NSNotification *)n { report_focus(); }
+// privatewebchat only notifies when it isn't being looked at, so a banner always shows
+- (void)userNotificationCenter:(UNUserNotificationCenter *)c willPresentNotification:(UNNotification *)n
+         withCompletionHandler:(void (^)(UNNotificationPresentationOptions))done {
+  done(UNNotificationPresentationOptionBanner | UNNotificationPresentationOptionList | UNNotificationPresentationOptionSound);
+}
+- (void)userNotificationCenter:(UNUserNotificationCenter *)c didReceiveNotificationResponse:(UNNotificationResponse *)r
+         withCompletionHandler:(void (^)(void))done {
+  [self show:nil];
+  done();
+}
 - (BOOL)applicationShouldHandleReopen:(NSApplication *)app hasVisibleWindows:(BOOL)visible {
   if (!visible) [self show:nil];
   return YES;
 }
 @end
 static PwcWindowDelegate *delegate;
+namespace { void show_window() { if (delegate && window) [delegate show:nil]; } }
 
 extern "C" {
 
@@ -222,6 +262,8 @@ webview_t webview_create(int dbg, void *wnd) {
   delegate = [PwcWindowDelegate new];
   window.delegate = delegate;
   NSApp.delegate = delegate;
+  // Only an app bundle has a bundle id, and Notification Center won't run without one
+  if (NSBundle.mainBundle.bundleIdentifier) UNUserNotificationCenter.currentNotificationCenter.delegate = delegate;
   window.releasedWhenClosed = NO;
   window.backgroundColor = NSColor.blackColor;
   [window center];
@@ -315,6 +357,9 @@ webview_error_t webview_destroy(webview_t) {
   loader = nullptr;
   return WEBVIEW_ERROR_OK;
 }
+
+int plat_focused(void) { return focused_now(); }
+void plat_on_focus(void (*fn)(int)) { focus_fn = fn; focus_was = -1; report_focus(); }
 
 void plat_close_to_tray(void (*on_hide)(void)) {
   hide_fn = on_hide;

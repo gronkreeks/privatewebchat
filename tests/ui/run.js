@@ -33,7 +33,7 @@ function serveUi() {
     const name = path.basename(req.url.split('?')[0]) || 'index.html';
     if (name === 'config.js') {
       rsp.writeHead(200, { 'Content-Type': 'text/javascript' });
-      return rsp.end(`const PwcConfig = { SERVER: 'ws://127.0.0.1:${RELAY_PORT}', VERSION: '${VERSION}', UPDATES: 'http://127.0.0.1:${UI_PORT}/releases' };`);
+      return rsp.end(`const PwcConfig = { SERVER: 'ws://127.0.0.1:${RELAY_PORT}', VERSION: '${VERSION}', OWNER_CERT: ${JSON.stringify(owner.cert)}, UPDATES: 'http://127.0.0.1:${UI_PORT}/releases' };`);
     }
     const file = name === 'mock.js' ? path.join(__dirname, 'mock.js') : path.join(UI, name);
     if (!fs.existsSync(file)) { rsp.writeHead(404); return rsp.end(); }
@@ -180,6 +180,8 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert(await maya.js(`return $('joinMore').classList.contains('hidden') && $('joinRow').classList.contains('hidden')`), 'no username box before a code');
   await maya.fill('#joinCode', 'PWC1.notarealcode');
   await maya.until(`$('joinErr').textContent.includes("isn't valid")`, 'bad code refused');
+  await maya.fill('#joinCode', owner.keys.sigPub);
+  await maya.until(`$('joinErr').textContent.includes("That's the owner key") && $('joinErr').textContent.includes('node tools/owner.js invite')`, 'owner key pasted by mistake explained');
   assert(await maya.js(`return $('joinMore').classList.contains('hidden')`), 'still no username box');
   const code1 = await inviteCode();
   await maya.fill('#joinCode', code1);
@@ -194,7 +196,8 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert((await maya.js(`return $('setPinErr').textContent`)).includes('4 to 12'), 'short PIN refused');
   await setPin(maya, '1234');
   await online(maya);
-  console.log('✓ invite code first, then username; maya joined');
+  await maya.until(`window.__startup === true`, 'opens at login by default');
+  console.log('✓ invite code first, then username; maya joined (a long PWC1 code still works); opens at login');
 
   const code2 = await inviteCode();
   await join(sam, code2, 'sam', '5678');
@@ -212,8 +215,10 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await sam.fill('#friendsBody .addbox input', 'leo');
   await sam.clickText('Send friend request');
   await sam.until(`$('friendsBody').textContent.includes('will be sent when they come online')`, 'request waits');
-  await join(leo, await inviteCode(), 'leo', '2468');
-  console.log('✓ leo joined');
+  const short = await P.makeShortInvite(owner.keys.sigPriv, 24 * 90);
+  assert(short.length < 120, 'short invite codes are short');
+  await join(leo, short, 'leo', '2468');
+  console.log('✓ leo joined with a short invite code');
   await nav(leo, 'Friends'); await tab(leo, 'pending');
   await leo.until(`$('friendsBody').textContent.includes('sam')`, 'waiting request arrives');
   await rowAction(leo, 'sam', 'Decline');
@@ -231,6 +236,22 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await maya.say('Nope. It only passes along ciphertext.');
   await sam.until(`$('log').textContent.includes('passes along')`, 'sam receives');
   console.log('✓ General works for everyone');
+
+  // ── Mentions: typing @ suggests people, and the person mentioned is notified even in General ──
+  await background(maya, true);
+  await sam.fill('#msg', 'hey @ma');
+  await sam.until(`!$('pingList').classList.contains('hidden') && $('pingList').textContent.includes('maya')`, 'mention suggestions');
+  await sam.js(`$('msg').dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))`);
+  assert.strictEqual(await sam.js(`return $('msg').value`), 'hey @maya ', 'Tab picks the suggestion');
+  assert(await sam.js(`return $('pingList').classList.contains('hidden')`), 'suggestions close after picking');
+  await sam.fill('#msg', 'hey @maya are you coming?');
+  await sam.js(`$('msg').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+  await maya.until(`window.__notes.some(n => n.title === 'sam mentioned you in General' && n.body === 'hey @maya are you coming?')`, 'mention notification');
+  await maya.until(`[...document.querySelectorAll('#log .m.pinged')].some(m => m.querySelector('.ping.me'))`, 'mention highlighted');
+  assert(!(await leo.js(`return window.__notes.some(n => n.title.includes('mentioned'))`)), 'only the person mentioned is notified');
+  await leo.until(`[...document.querySelectorAll('#log .ping')].some(p => p.textContent === '@maya') && !document.querySelector('#log .m.pinged')`, 'others see the mention, not highlighted');
+  await background(maya, false);
+  console.log('✓ @mentions: suggestions while typing, highlighted, and the person mentioned gets a notification');
 
   // ── Replies ──
   await sam.js(`[...document.querySelectorAll('#log .m')].find(m => m.textContent.includes('passes along')).querySelector('.rbtn').click()`);
@@ -360,6 +381,26 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert((await lastMsg(maya)).includes('see you there'), 'group messages are kept');
   console.log('✓ direct messages are deleted after 24 hours; group chats are kept');
 
+  // ── Announcements: the patch notes are there, only the owner can post, everyone reads ──
+  await maya.js(`window.__ownerKey = ${JSON.stringify(owner.keys.sigPub)}; window.__ownerSecret = ${JSON.stringify(owner.keys.sigPriv)}`);
+  await nav(maya, 'Announcements');
+  await maya.until(`$('log').textContent.includes('privatewebchat ${VERSION}') && $('log').textContent.includes('Patch notes') && $('log').textContent.includes('Reply')`, 'patch notes posted');
+  await maya.until(`!$('composer').classList.contains('hidden')`, 'the owner can post');
+  await background(sam, true);
+  await maya.say('## Server maintenance\n- Tonight at 9pm');
+  await nav(leo, 'Announcements');
+  await leo.until(`$('log').textContent.includes('Server maintenance') && $('log').querySelector('.ann li')`, 'leo reads the announcement');
+  assert(await leo.js(`return $('composer').classList.contains('hidden') && !$('annLocked').classList.contains('hidden')`), 'no message box for everyone else');
+  await sam.until(`window.__notes.some(n => n.title === 'Announcement from developer' && n.body === 'Server maintenance')`, 'announcement notification');
+  await sam.until(`!$('annBadge').classList.contains('hidden')`, 'announcements badge');
+  await background(sam, false);
+  await leo.js(`P = PwcProto; const ws = new WebSocket(${JSON.stringify(`ws://127.0.0.1:${RELAY_PORT}`)}); ws.onopen = async () => {
+    ws.send(JSON.stringify({ t: 'announce', ann: await P.signAnn(Vault.data.keys.sigPriv, P.randomHex(8), Date.now(), 'fake news') })); setTimeout(() => ws.close(), 300); }`);
+  await sleep(900);
+  assert(!(await maya.js(`return $('log').textContent.includes('fake news')`)), 'a post not signed by the owner is ignored');
+  await nav(leo, 'General');
+  console.log('✓ Announcements: patch notes posted automatically, only the owner can post, everyone gets it');
+
   // ── Settings, profile, safety numbers ──
   await maya.click('#settingsBtn');
   await maya.until(`$('modalCard').textContent.includes('Black-out key')`, 'settings');
@@ -463,6 +504,8 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert(!(await maya.js(`return $('log').textContent.includes('Sent while leo was away')`)), 'maya\'s copy is gone');
   await nav(maya, 'Weekend plans');
   assert(!(await maya.js(`return $('log').textContent.includes('see you there')`)), 'group history is gone');
+  await nav(maya, 'Announcements');
+  assert(await maya.js(`return $('log').textContent.includes('Server maintenance')`), 'announcements are kept through a restart');
   await leo.fill('#unlockPin', '2468');
   await leo.click('#unlockGo');
   await online(leo);
@@ -492,28 +535,34 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
 
   // ── Owner commands: only where the owner key is, and only after the PIN ──
   await sam.click('#settingsBtn');
-  assert(!(await sam.js(`return $('modalCard').textContent.includes('Owner commands')`)), 'no owner commands without the owner key');
+  assert(!(await sam.js(`return $('modalCard').textContent.includes('owner commands')`)), 'no owner commands without the owner key');
   await sam.js(`[...document.querySelectorAll('#modalCard button')].pop().click()`);
   await maya.js(`window.__ownerKey = ${JSON.stringify(owner.keys.sigPub)}`);
   await maya.click('#settingsBtn');
-  await maya.until(`$('modalCard').textContent.includes('Owner commands')`, 'owner section');
-  await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Owner commands').click()`);
+  await maya.until(`$('modalCard').textContent.includes('Invite codes and owner commands')`, 'owner section');
+  await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Invite codes and owner commands').click()`);
   await maya.fill('#modalCard input', '0000');
   await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Show commands').click()`);
   await maya.until(`$('modalCard').textContent.includes('Wrong PIN')`, 'wrong PIN refused');
   await maya.fill('#modalCard input', '1234');
   await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Show commands').click()`);
   await maya.until(`$('modalCard').dataset.kind === 'owner' && $('modalCard').textContent.includes('node tools/owner.js invite')`, 'owner commands');
+  await maya.js(`window.__ownerSecret = ${JSON.stringify(owner.keys.sigPriv)}`);
+  await maya.clickText('Make an invite code');
+  await maya.until(`[...document.querySelectorAll('#modalCard .box')].some(b => b.textContent.startsWith('PWC2.'))`, 'invite code made in the app');
+  const appCode = await maya.js(`return [...document.querySelectorAll('#modalCard .box')].find(b => b.textContent.startsWith('PWC2.')).textContent`);
   await maya.shot('owner-commands.png');
-  await maya.js(`[...document.querySelectorAll('#modalCard button')].find(b => b.textContent === 'Copy').click()`);
+  await maya.js(`[...document.querySelectorAll('#modalCard button')].filter(b => b.textContent === 'Copy')[0].click()`);
+  assert.strictEqual(await maya.js(`return window.__copied`), appCode, 'copy the invite code');
+  await maya.js(`[...document.querySelectorAll('#modalCard .box')].find(b => b.textContent === 'node tools/owner.js invite').parentNode.querySelector('button').click()`);
   assert.strictEqual(await maya.js(`return window.__copied`), 'node tools/owner.js invite', 'copy button');
   await maya.js(`[...document.querySelectorAll('#modalCard button')].pop().click()`);
-  console.log('✓ owner commands show only with the owner key and the PIN');
+  console.log('✓ owner commands and in-app invite codes show only with the owner key and the PIN');
 
   // ── Usernames are unique ──
   const dup = await newPage('dup');
   await dup.size(1100, 700);
-  await enterCode(dup, await inviteCode());
+  await enterCode(dup, appCode);
   await dup.fill('#joinName', 'SAM');
   await dup.click('#joinNext');
   await setPin(dup, '1357');
@@ -556,6 +605,14 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   assert.strictEqual(await leo.js(`return sessionStorage.length`), 0, 'nothing left after wipe');
   assert.strictEqual(await leo.js(`return document.documentElement.dataset.theme`), 'kali', 'wipe resets the theme');
   console.log('✓ wipe PIN erases everything and privatewebchat opens as new');
+
+  // ── The app says when its window isn't being looked at, even if the page thinks it has focus ──
+  await maya.js(`PwcFocus(false)`);
+  await nav(sam, 'maya');
+  await sam.say('Are you looking at this?');
+  await maya.until(`window.__notes.some(n => n.title === 'sam' && n.body === 'Are you looking at this?')`, 'notification when the app says it is in the background');
+  await maya.js(`PwcFocus(true)`);
+  console.log('✓ notifications follow what the app says about its window');
 
   // ── Removing a member (tools/owner.js remove sam) ──
   const dir = await new Promise(async res => {
