@@ -50,7 +50,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 2. Open it. On Mac, open the .dmg and drag privatewebchat into Applications. The first time, your computer will warn that the app isn't from an identified developer:
    - **Mac:** right-click the app → **Open** → **Open**. If there's no Open button, go to **System Settings → Privacy & Security** and click **Open Anyway**
    - **Windows:** **More info** → **Run anyway**
-3. Paste your invite code (it starts with `PWC2.`), then pick a username and a PIN.
+3. Paste your invite code (it starts with `PWC2.`, or `PWC1.` for the longer kind), then pick a username and a PIN.
 
 ### Checking your download
 
@@ -97,7 +97,7 @@ Change the look in **Settings → Appearance**. The default is **Kali**: black, 
 
 **How do I get an invite code?** Ask the developer. Each code works for one person.
 
-**I'm the developer. How do I get in?** The same way as everyone else: make yourself an invite code with `node tools/owner.js invite` and paste it into the app. The owner key (`node tools/owner.js key`, the one starting with `B`) only goes in the server's settings on Render, and it isn't an invite code. Once you're in on the computer that holds the owner key, **Settings → Owner** makes invite codes for you, and you can post in **Announcements**.
+**I'm the developer. How do I get in?** The same way as everyone else: make yourself an invite code with `node tools/owner.js invite` and paste it into the app. It prints short codes (`PWC2.`) once the newest release reads them (1.1.6 and newer), and long ones (`PWC1.`) before that; `--long` always gives a long one, which every version reads. The owner key (`node tools/owner.js key`, the one starting with `B`) only goes in the server's settings on Render, and it isn't an invite code. Once you're in on the computer that holds the owner key, **Settings → Owner** makes invite codes for you, and you can post in **Announcements**.
 
 **Are announcements encrypted?** No. Everyone in the network reads them, so they're signed with the owner key instead: nobody else, including the server, can post one or change one. Unlike messages, they stay when the server goes offline.
 

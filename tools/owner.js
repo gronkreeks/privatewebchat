@@ -7,7 +7,8 @@
 //   node tools/owner.js init                  make the owner key and print OWNER_KEY for Render
 //   node tools/owner.js key                   print OWNER_KEY again (for Render, not an invite code)
 //   node tools/owner.js cert                  print OWNER_CERT, for app/ui/config.js
-//   node tools/owner.js invite [count] [days] print invite codes (default 1 code, valid 90 days)
+//   node tools/owner.js invite [count] [days] print invite codes (default 1 code, valid 90 days;
+//                                             add --long or --short to pick the kind)
 //   node tools/owner.js members               list everyone on the server
 //   node tools/owner.js remove <username>     remove someone from the server
 //   node tools/owner.js announce <file|text>  post in Announcements (Markdown: # headings, - bullets)
@@ -27,9 +28,19 @@ function load() {
   try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); }
   catch (e) { die(`No owner key yet (${FILE}). Run: node tools/owner.js init`); }
 }
-// Short codes (PWC2.) need the app to know this owner's certificate (OWNER_CERT in config.js);
-// until it does, the long kind (PWC1.) is printed instead
+// Short codes (PWC2.) need the app to know this owner's certificate (OWNER_CERT in config.js), and only
+// privatewebchat 1.1.6 and newer can read them. So they're printed once the newest release is at least
+// 1.1.6; until then, or when GitHub can't be reached, it's the long kind (PWC1.), which every version reads.
 const knowsCert = owner => { const c = require('../app/ui/config.js').OWNER_CERT; return !!c && P.canon(c) === P.canon(owner.cert); };
+const SHORT_FROM = [1, 1, 6];
+async function shortReleased() {
+  try {
+    const r = await fetch(require('../app/ui/config.js').UPDATES + '/latest', { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'privatewebchat-owner' }, signal: AbortSignal.timeout(8000) });
+    const m = r.ok && /^v(\d+)\.(\d+)\.(\d+)$/.exec((await r.json()).tag_name);
+    const d = m && m.slice(1).map(Number).map((x, i) => x - SHORT_FROM[i]).find(x => x);
+    return !!m && (d || 0) >= 0;
+  } catch (e) { return false; }
+}
 const encodeInvite = inv => 'PWC1.' + Buffer.from(JSON.stringify(inv)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 // Opens a connection, proves we hold the owner key, and returns the member list and removals
@@ -75,16 +86,20 @@ async function members(owner, session) {
     console.error('\nPut that line in app/ui/config.js (it only has public keys), then rebuild the app.');
   } else if (cmd === 'invite') {
     const owner = load();
-    const count = Math.max(1, Math.min(200, parseInt(args[0] || '1', 10) || 1));
-    const days = Math.max(1, Math.min(3650, parseFloat(args[1] || '90') || 90));
-    const short = knowsCert(owner);
+    const flags = args.filter(a => a.startsWith('--')), nums = args.filter(a => !a.startsWith('--'));
+    const count = Math.max(1, Math.min(200, parseInt(nums[0] || '1', 10) || 1));
+    const days = Math.max(1, Math.min(3650, parseFloat(nums[1] || '90') || 90));
+    const canShort = knowsCert(owner), released = canShort && !flags.includes('--long') && !flags.includes('--short') && await shortReleased();
+    const short = canShort && !flags.includes('--long') && (flags.includes('--short') || released);
     for (let i = 0; i < count; i++) {
       if (short) console.log(await P.makeShortInvite(owner.keys.sigPriv, days * 24));
       else { const inv = await P.makeInvite(owner.cert, owner.keys, days * 24); console.log(encodeInvite({ g: inv.g, k: inv.k })); }
       if (i < count - 1) console.log('');
     }
     console.error(`\n${count} invite code${count > 1 ? 's' : ''}, each works once and expires in ${days} days. Paste it into privatewebchat's "Invite code" box.`);
-    if (!short) console.error("These are long codes because app/ui/config.js doesn't have this owner's certificate yet (node tools/owner.js cert).");
+    if (!canShort) console.error("These are long codes because app/ui/config.js doesn't have this owner's certificate yet (node tools/owner.js cert).");
+    else if (!short && !flags.includes('--long')) console.error("These are the long kind (PWC1.) because the newest privatewebchat release is older than 1.1.6, which can't read short codes.\nOnce 1.1.6 is released, this prints short ones (PWC2.).");
+    else if (short) console.error('Short codes (PWC2.) need privatewebchat 1.1.6 or newer. If the app says codes start with PWC1., it will update itself the next time it opens, or use --long.');
   } else if (cmd === 'announce') {
     const owner = load();
     const what = args.join(' ').trim();
@@ -117,6 +132,6 @@ async function members(owner, session) {
     s.ws.close();
     console.log(`Removed ${target.name}. They've been disconnected and their invite no longer works.`);
   } else {
-    console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 14).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
+    console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 15).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
   }
 })().catch(e => die(e.message));
