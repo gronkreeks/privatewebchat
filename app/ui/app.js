@@ -7,7 +7,7 @@
   const P = PwcProto;
   const $ = id => document.getElementById(id);
   const MAX_HISTORY = 3000, SHOWN = 400, REPLY_TEXT = 140;
-  const DM_TTL = 24 * 3600000;   // direct messages are deleted after 24 hours, for privacy and to save space
+  const MSG_TTL = 24 * 3600000;   // messages are deleted after 24 hours, for privacy and to save space
   const OUTBOX_TTL = 14 * 24 * 3600000, RESEND_AFTER = 6 * 3600000;   // how long, and how often, unconfirmed messages are resent
 
   let D = null;        // the unlocked vault (Vault.data)
@@ -65,10 +65,13 @@
   // The person a mention means: a trailing full stop ends the sentence, not the name
   const pinged = raw => { const id = idByName(raw); if (id) return [id, raw]; const n = raw.replace(/\.+$/, ''); return n.length >= 2 && idByName(n) ? [idByName(n), n] : [null, raw]; };
   const pingsMe = text => [...String(text).matchAll(PING_RE)].some(m => pinged(m[1])[0] === D.me);
-  function withPings(text) {
+  // @everyone only counts from the developer: in General it carries a signature by the owner key
+  const EVERYONE_RE = /(?<![\w@])@everyone\b/i;
+  function withPings(text, everyone) {
     const out = [];
     let last = 0;
     for (const m of text.matchAll(PING_RE)) {
+      if (everyone && m[1].toLowerCase() === 'everyone') { out.push(text.slice(last, m.index), h('span', { class: 'ping me', text: '@everyone' })); last = m.index + 9; continue; }
       const [id, name] = pinged(m[1]);
       if (!id) continue;
       out.push(text.slice(last, m.index), h('span', { class: 'ping' + (id === D.me ? ' me' : ''), text: '@' + name, onclick: () => profile(id) }));
@@ -282,7 +285,8 @@
   // Every copy connects to the developer's server (config.js). Paste an invite code, then the
   // username box appears.
   let pending = null;   // what setup will create once a PIN is chosen
-  const usernameProblem = n => n.length < 2 ? 'Usernames need at least 2 characters' : !P.USERNAME_RE.test(n) ? 'Usernames can only use letters, numbers, _ and .' : null;
+  const usernameProblem = n => n.length < 2 ? 'Usernames need at least 2 characters' : !P.USERNAME_RE.test(n) ? 'Usernames can only use letters, numbers, _ and .'
+    : n.toLowerCase() === 'everyone' ? "That one's taken: @everyone pings the whole network" : null;
 
   // Invite codes: PWC2. (short) or PWC1. (the long kind from before 1.1.6), see protocol.js
   const INVITE_PREFIX = 'PWC1.';
@@ -417,7 +421,7 @@
   async function start() {
     D = Vault.data;
     D.friends = D.friends || {}; D.blocked = D.blocked || {}; D.outbox = D.outbox || {}; D.wanted = D.wanted || {};
-    D.ann = D.ann || {}; D.pings = D.pings || {}; D.spoken = D.spoken || {};
+    D.ann = D.ann || {}; D.pings = D.pings || {}; D.spoken = D.spoken || {}; D.hidden = D.hidden || {};
     for (const [id, e] of Object.entries(D.spoken)) if (e.exp <= Date.now()) delete D.spoken[id];
     if (!D.rooms.announcements) D.rooms.announcements = { id: 'announcements', kind: 'ann', name: 'Announcements' };
     if (D.settings.notify === undefined) { D.settings.notify = true; D.settings.previews = true; }
@@ -431,7 +435,7 @@
     // Messages written while the server was down (or still unconfirmed when privatewebchat quit) go out once it's back
     for (const [rid, list] of Object.entries(D.msgs)) for (const m of list) if (m.st === 'pending' && m.from === D.me && m.mid) waiting.set(m.mid, rid);
     S.view = Object.values(D.friends).includes('friend') || Object.keys(S.info).length > 1 ? 'friends' : 'general';
-    pruneDms();
+    pruneOld();
     await applyPanicKey();
     try { window.pwc_notify_setup(); } catch (e) { }
     try { S.fg = !!(await window.pwc_focused()); } catch (e) { }
@@ -552,9 +556,10 @@
           return;
         }
         S.boot = m.boot || null;
-        if (S.boot && D.serverBoot !== S.boot) { if (D.serverBoot) clearHistory(); D.serverBoot = S.boot; await Vault.saveNow(); }
+        // A restart loses what the server was holding; the outbox sends anything unconfirmed again
+        if (S.boot && D.serverBoot !== S.boot) { D.serverBoot = S.boot; await Vault.saveNow(); }
         wsSend({ t: 'auth', v: PwcConfig.VERSION, cert: D.cert, sig: await P.sign(D.keys.sigPriv, ['pwc-auth', m.nonce]), dir: Object.values(D.dir), removals: D.removals, ann: Object.values(D.ann).filter(a => a.s),
-          spoken: Object.values(D.spoken).filter(e => e.exp > Date.now()) });
+          spoken: Object.values(D.spoken).filter(e => e.exp > Date.now()), hidden: !!D.settings.hidden });
         break;
       case 'welcome':
         retry = 1500;
@@ -564,6 +569,8 @@
         for (const c of m.dir || []) await learn(c, true);
         for (const a of Array.isArray(m.ann) ? m.ann.slice(0, 200) : []) await takeAnn(a, false);
         for (const e of Array.isArray(m.spoken) ? m.spoken.slice(0, 200) : []) await takeSpoken(e);
+        // Who chose not to be listed. Everyone online has told the server, so they're up to date.
+        if (Array.isArray(m.hidden)) { for (const id of m.online || []) delete D.hidden[id]; for (const id of m.hidden) if (typeof id === 'string') D.hidden[id] = true; }
         S.online = new Set(m.online || []);
         S.live = true;
         setStatus('online');
@@ -580,6 +587,7 @@
       case 'removals': await applyRemovals(m.removals); break;
       case 'ann': await takeAnn(m.ann, true); break;
       case 'spoken': await takeSpoken(m.entry); break;
+      case 'hidden': if (typeof m.id === 'string') { if (m.on) D.hidden[m.id] = true; else delete D.hidden[m.id]; Vault.save(); renderFriends(); } break;
       case 'env': await receive(m); break;
       case 'sent': markSent(m.ref); break;
       case 'error': markFailed(m.ref); err('chatErr', m.msg); break;
@@ -641,10 +649,11 @@
     if (p.k === 'friend') return onFriend(p.op, env.from);
     if (p.k === 'room') { applyRoom(p.room, env.from); render(); return; }
     if (p.k !== 'msg' || typeof p.text !== 'string' || !p.text.trim() || typeof p.mid !== 'string' || p.mid.length > 40) return;
+    if (at < Date.now() - MSG_TTL) return;   // never older than 24 hours
     let rid;
     if (p.room === 'general') rid = 'general';
     else if (p.room === dmId(env.from)) {
-      if (!isFriend(env.from) || at < Date.now() - DM_TTL) return;   // friends only, and never older than 24 hours
+      if (!isFriend(env.from)) return;   // friends only
       rid = p.room; ensureDm(env.from);
     } else {
       if (p.meta) applyRoom(p.meta, env.from);
@@ -653,6 +662,7 @@
       rid = r.id;
     }
     const m = { mid: p.mid, from: env.from, text: p.text.slice(0, P.MAX_TEXT), at };
+    if (rid === 'general' && typeof p.ev === 'string' && await P.verify(D.owner, ['pwc-everyone', p.mid, env.from], p.ev)) m.everyone = true;
     if (typeof p.gif === 'string' && PwcGifs.byId[p.gif]) m.gif = p.gif;
     const re = p.re;
     if (re && typeof re === 'object' && typeof re.mid === 'string' && re.mid.length <= 40 && typeof re.from === 'string' && P.ID_RE.test(re.from) && typeof re.text === 'string')
@@ -711,13 +721,13 @@
     if (list.length > MAX_HISTORY) list.splice(0, list.length - MAX_HISTORY);
     const r = D.rooms[rid];
     if (!m.sys && m.from !== D.me) {
-      const away = rid !== S.view || !focused() || S.black, ping = !m.gif && pingsMe(m.text);
+      const away = rid !== S.view || !focused() || S.black, ping = !m.gif && (pingsMe(m.text) || !!m.everyone);
       if (away) { D.unread[rid] = (D.unread[rid] || 0) + 1; if (ping) D.pings[rid] = true; }
       // General is too busy to notify about, except when someone mentions you or replies to you
       if (r && (r.kind !== 'general' || ping || (m.re && m.re.from === D.me))) {
         const who = nameOf(m.from);
         const where = r.kind === 'general' ? 'General' : r.name;
-        notify(r.kind === 'dm' ? who : ping ? `${who} mentioned you in ${where}` : r.kind === 'general' ? `${who} replied to you in General` : `${who} in ${r.name}`,
+        notify(r.kind === 'dm' ? who : m.everyone ? `${who} mentioned @everyone in ${where}` : ping ? `${who} mentioned you in ${where}` : r.kind === 'general' ? `${who} replied to you in General` : `${who} in ${r.name}`,
           D.settings.previews ? m.text.slice(0, 160) : r.kind === 'dm' ? 'Sent you a message' : 'New message');
       }
     }
@@ -726,13 +736,13 @@
     renderSidebar();
   }
   const sysMsg = (rid, text) => addMsg(rid, { sys: true, text, at: Date.now() });
-  // Deletes direct messages older than 24 hours. Runs every minute, on focus and when a chat opens.
-  function pruneDms() {
+  // Deletes messages older than 24 hours, in every chat. Runs every minute, on focus and when a chat opens.
+  function pruneOld() {
     if (!S.unlocked) return;
-    const cutoff = Date.now() - DM_TTL;
+    const cutoff = Date.now() - MSG_TTL;
     let changed = false;
     for (const r of Object.values(D.rooms)) {
-      const list = r.kind === 'dm' && D.msgs[r.id];
+      const list = r.kind !== 'ann' && D.msgs[r.id];
       if (!list || !list.length || list[0].at > cutoff) continue;
       D.msgs[r.id] = list.filter(m => m.at > cutoff || m.st === 'pending');
       if (D.unread[r.id] > D.msgs[r.id].length) D.unread[r.id] = D.msgs[r.id].length;
@@ -741,10 +751,10 @@
     if (!changed) return;
     Vault.save();
     renderSidebar();
-    if (D.rooms[S.view] && D.rooms[S.view].kind === 'dm') renderLog();
+    if (D.rooms[S.view]) renderLog();
   }
-  setInterval(pruneDms, 60000);
-  window.addEventListener('focus', pruneDms);
+  setInterval(pruneOld, 60000);
+  window.addEventListener('focus', pruneOld);
   // Desktop notifications, only while privatewebchat is in the background and never while blacked out,
   // except when the window was closed to the tray / menu bar (S.away)
   function notify(title, body) {
@@ -759,8 +769,9 @@
   const ownerName = () => (D.cert.by && D.cert.by.from && D.cert.by.from.m && D.cert.by.from.m.name) || 'developer';
   const firstLine = text => text.split('\n').map(l => l.replace(/^#+\s*|^[-*+]\s+|\*\*|__|`/g, '').trim()).find(Boolean) || '';
   function annArrived(a, live) {
-    if (S.view !== 'announcements' || !focused() || S.black) D.unread.announcements = (D.unread.announcements || 0) + 1;
-    if (live) notify(`Announcement from ${ownerName()}`, D.settings.previews ? firstLine(a.text).slice(0, 160) : 'New announcement');
+    const all = !a.rel && EVERYONE_RE.test(a.text);
+    if (S.view !== 'announcements' || !focused() || S.black) { D.unread.announcements = (D.unread.announcements || 0) + 1; if (all) D.pings.announcements = true; }
+    if (live) notify(all ? `@everyone: announcement from ${ownerName()}` : `Announcement from ${ownerName()}`, D.settings.previews ? firstLine(a.text).slice(0, 160) : 'New announcement');
     Vault.save();
     renderSidebar();
     if (S.view === 'announcements') renderLog();
@@ -848,6 +859,7 @@
     if (op === 'request') D.friends[id] = 'outgoing';
     else if (op === 'accept') D.friends[id] = 'friend';
     else delete D.friends[id];
+    if (op === 'remove') closeDm(id);
     Vault.save(); render();
     return null;
   }
@@ -856,7 +868,22 @@
     if (st) await sendControl(id, { k: 'friend', op: st === 'incoming' ? 'decline' : st === 'outgoing' ? 'cancel' : 'remove' });
     delete D.friends[id];
     D.blocked[id] = true;
+    closeDm(id);
     Vault.save(); render();
+  }
+  function askRemoveFriend(id) {
+    ask(`Remove ${nameOf(id)} as a friend?`, "Your conversation with them closes, and you can't message each other until one of you sends a new friend request.", 'Remove friend', async () => { const m = await friendAction('remove', id); if (m) friendsNote(m); }, true);
+  }
+  // Closing a conversation takes it out of Messages and deletes its messages from this device. The
+  // other person isn't told, and it comes back if either of you writes again.
+  function closeDm(id) {
+    const rid = dmId(id);
+    delete D.rooms[rid]; delete D.msgs[rid]; seen(rid);
+    if (S.reply && S.reply.rid === rid) S.reply = null;
+    if (S.view === rid) S.view = 'friends';
+  }
+  function askCloseDm(id) {
+    ask('Close this conversation?', `It goes from your messages and its messages are deleted from this device. ${nameOf(id)} isn't told, and it comes back if either of you writes again.`, 'Close', () => { closeDm(id); Vault.save(); render(); });
   }
   function unblock(id) { delete D.blocked[id]; Vault.save(); render(); }
   // Requests to usernames this app hadn't seen yet (the server forgets members when it restarts, so
@@ -882,7 +909,7 @@
     const to = recipients(r);
     if (!to.length) return false;
     // The server also drops undelivered DMs after 24 hours
-    const ttl = r.kind === 'dm' && payload.k === 'msg' ? DM_TTL : undefined;
+    const ttl = payload.k === 'msg' ? MSG_TTL : undefined;
     const t = Date.now();
     if (payload.k !== 'rcpt') payload = { ...payload, q: P.randomHex(8), at: t };
     const sealed = await S.box.seal(payload, to);
@@ -892,8 +919,8 @@
     return true;
   }
   // Everything sent waits in D.outbox until each recipient's app confirms it, and is sent again after
-  // RESEND_AFTER, then twice as long each time. Recipients ignore repeats. A server restart clears
-  // the outbox along with everything else (clearHistory).
+  // RESEND_AFTER, then twice as long each time, and straight away after a server restart (it loses what
+  // it was holding). Recipients ignore repeats.
   let resending = false;
   async function resendOutbox() {
     if (resending) return;
@@ -914,18 +941,6 @@
     } finally { resending = false; }
   }
   setInterval(() => { if (S.live) resendOutbox(); }, 10 * 60000);
-  // Messages last only as long as the server keeps running: once it has gone offline (it comes back
-  // with a new boot id), every app deletes every message, including ones not yet delivered. Friends,
-  // groups and keys are kept.
-  // Messages written while the server is down are kept, so they still go out after it comes back
-  function clearHistory() {
-    const at = Date.now(), text = 'The server went offline, so every message was deleted. Messages only last while the server is running.';
-    const old = D.msgs;
-    D.msgs = {}; D.unread = {}; D.outbox = {}; sentRefs.clear();
-    D.pings = {};
-    for (const id of Object.keys(D.rooms)) if (D.rooms[id].kind !== 'ann') D.msgs[id] = [{ sys: true, text, at }, ...(old[id] || []).filter(m => waiting.has(m.mid))];
-    render();
-  }
   async function sendMsg() {
     const text = $('msg').value.replace(/\s+$/, '').replace(/^\n+/, '');
     if (!text.trim()) return;
@@ -950,7 +965,11 @@
   }
   async function deliver(r, m) {
     if (S.status !== 'online') return hold(r.id, m);
-    const payload = { k: 'msg', room: r.id, mid: m.mid, text: m.text, gif: m.gif, re: m.re, meta: r.kind === 'group' ? roomMeta(r) : undefined };
+    if (r.kind === 'general' && S.owner && !m.ev && EVERYONE_RE.test(m.text)) {
+      const key = await native.ownerSecret();
+      if (key) { m.ev = await P.sign(key, ['pwc-everyone', m.mid, D.me]).catch(() => undefined); m.everyone = !!m.ev; }
+    }
+    const payload = { k: 'msg', room: r.id, mid: m.mid, text: m.text, gif: m.gif, re: m.re, ev: m.ev, meta: r.kind === 'group' ? roomMeta(r) : undefined };
     try {
       if (await sendPayload(r, payload, m.mid)) watch();
       else if (recipients(r).length) { sentRefs.delete(m.mid); hold(r.id, m); }
@@ -1007,7 +1026,7 @@
     const incoming = Object.values(D.friends).filter(x => x === 'incoming').length;
     badge($('friendsBadge'), incoming);
     badge($('generalBadge'), D.unread.general || 0, D.pings.general);
-    badge($('annBadge'), D.unread.announcements || 0);
+    badge($('annBadge'), D.unread.announcements || 0, D.pings.announcements);
     // The inbox: direct messages with friends (or with past messages) and group chats, newest first
     const chats = Object.values(D.rooms).filter(r => r.kind === 'group' || (r.kind === 'dm' && (isFriend(r.with) || (D.msgs[r.id] || []).length)))
       .sort((a, b) => lastAt(b) - lastAt(a));
@@ -1016,7 +1035,8 @@
       return h('button', { class: 'item' + (r.id === S.view ? ' on' : ''), onclick: () => openRoom(r.id) },
         r.kind === 'dm' ? avatar(r.with, 'sm', true) : groupAvatar(r, 'sm'),
         h('span', { class: 'grow' }, h('span', { class: 'nm', text: chatName(r) }), r.kind === 'group' ? h('span', { class: 'sub2', text: `${r.members.length} members` }) : null),
-        n ? h('span', { class: 'badge' + (D.pings[r.id] ? ' ping' : ''), text: (D.pings[r.id] ? '@ ' : '') + (n > 99 ? '99+' : n) }) : null);
+        n ? h('span', { class: 'badge' + (D.pings[r.id] ? ' ping' : ''), text: (D.pings[r.id] ? '@ ' : '') + (n > 99 ? '99+' : n) }) : null,
+        r.kind === 'dm' ? h('span', { class: 'x', role: 'button', title: 'Close conversation', onclick: e => { e.stopPropagation(); askCloseDm(r.with); } }, '×') : null);
     }) : [h('p', { class: 'hint', style: 'padding: 0.3rem 0.55rem', text: 'Your direct messages and group chats show up here.' })]));
     updateTitle();
   }
@@ -1048,7 +1068,7 @@
     if (S.ftab === 'online' || S.ftab === 'all') {
       const list = S.ftab === 'online' ? friends.filter(isOnline) : friends;
       head = `${S.ftab === 'online' ? 'Online' : 'All friends'} — ${list.length}`;
-      rows = list.map(id => personRow(id, status(id), [message(id)]));
+      rows = list.map(id => personRow(id, status(id), [message(id), act('Remove', () => askRemoveFriend(id), 'danger')]));
       empty = friends.length ? "None of your friends are online right now." : "No friends yet. Add someone by their username, or see who's in the network under Add friend.";
     } else if (S.ftab === 'pending') {
       const inc = byName(Object.keys(D.friends).filter(id => D.friends[id] === 'incoming'));
@@ -1095,7 +1115,8 @@
       },
     }, 'Send friend request');
     input.addEventListener('keydown', e => { if (e.key === 'Enter') send.click(); });
-    const others = Object.values(S.info).filter(i => i.id !== D.me).map(i => i.id).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
+    // People who chose not to be listed only show here once you're friends or have a request going
+    const others = Object.values(S.info).filter(i => i.id !== D.me && (!D.hidden[i.id] || D.friends[i.id])).map(i => i.id).sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
     const stateFor = id => {
       const st = D.friends[id];
       if (D.blocked[id]) return h('span', { class: 'tagline', text: 'Blocked' });
@@ -1131,6 +1152,8 @@
     a.classList.toggle('hidden', r.kind === 'general' || r.kind === 'ann');
     a.textContent = r.kind === 'group' ? 'Group settings' : 'Profile';
     a.onclick = () => r.kind === 'group' ? groupSettings() : profile(r.with);
+    $('roomClose').classList.toggle('hidden', r.kind !== 'dm');
+    $('roomClose').onclick = () => askCloseDm(r.with);
   }
   let shownAll = false;
   function renderLog() {
@@ -1142,8 +1165,8 @@
     const from = shownAll ? 0 : Math.max(0, list.length - SHOWN);
     if (from > 0) log.append(h('button', { class: 'link older', onclick: () => { shownAll = true; renderLog(); log.scrollTop = 0; } }, `Show ${from} older messages`));
     const r = D.rooms[S.view];
-    if (!list.length) log.append(h('div', { class: 'sys', text: r.kind === 'general' ? 'This is the start of General. Everyone in the network can read what you send here, and nobody else can, not even the server.'
-      : r.kind === 'dm' ? `This is your conversation with ${nameOf(r.with)}. Only the two of you can read it, and messages are deleted after 24 hours.` : 'This is the start of the group. Only its members can read it.' }));
+    if (!list.length) log.append(h('div', { class: 'sys', text: r.kind === 'general' ? 'This is General. Everyone in the network can read what you send here, and nobody else can, not even the server. Messages are deleted after 24 hours.'
+      : r.kind === 'dm' ? `This is your conversation with ${nameOf(r.with)}. Only the two of you can read it, and messages are deleted after 24 hours.` : 'This is the group. Only its members can read it, and messages are deleted after 24 hours.' }));
     for (let i = from; i < list.length; i++) appendLine(list[i], true);
     log.scrollTop = log.scrollHeight;
   }
@@ -1155,10 +1178,10 @@
     if (m.sys) line = h('div', { class: 'sys', text: m.text });
     else {
       const mine = m.from === D.me, nm = nameOf(m.from), gif = m.gif && PwcGifs.byId[m.gif];
-      line = h('div', { class: 'm' + (mine ? ' me' : '') + (m.st === 'pending' ? ' pending' : '') + (!mine && !gif && pingsMe(m.text) ? ' pinged' : ''), 'data-mid': m.mid },
+      line = h('div', { class: 'm' + (mine ? ' me' : '') + (m.st === 'pending' ? ' pending' : '') + (!mine && !gif && (pingsMe(m.text) || m.everyone) ? ' pinged' : ''), 'data-mid': m.mid },
         m.re ? h('div', { class: 're', title: 'Show the original message', onclick: () => jumpTo(m.re.mid) }, h('span', { class: 'rn', text: nameOf(m.re.from) }), h('span', { class: 'rt', text: m.re.text })) : null,
         h('time', { text: fmtTime(m.at) }), h('b', { text: nm, style: `--h: ${hue(nm)}`, onclick: () => profile(m.from) }),
-        gif ? null : withPings(m.text),
+        gif ? null : withPings(m.text, m.everyone),
         m.st === 'pending' ? h('span', { class: 'conn', text: 'Connecting…' }) : null,
         m.st === 'failed' ? h('button', { class: 'fail', title: 'Send again', onclick: () => { m.st = 'pending'; renderLog(); deliver(D.rooms[S.view], m); } }, 'Not sent · Retry') : null,
         m.mid ? h('button', { class: 'rbtn', title: 'Reply', onclick: () => startReply(m) }, 'Reply') : null,
@@ -1233,7 +1256,7 @@
   }
   function openRoom(id) {
     if (!D.rooms[id]) return;
-    pruneDms();
+    pruneOld();
     if (id !== S.view) S.reply = null;
     S.view = id; shownAll = false;
     seen(id);
@@ -1242,7 +1265,7 @@
     closeModal(); closePings();
     render();
     if (!$('msg').disabled) $('msg').focus();
-    if (D.rooms[id].kind === 'ann') checkOwner().then(() => { if (S.view === id) { renderComposer(); renderLog(); } });
+    if (D.rooms[id].kind === 'ann' || id === 'general') checkOwner().then(() => { if (S.view === id) { renderComposer(); renderLog(); } });
   }
   window.addEventListener('focus', () => { if (S.black) $('blackPin').focus(); });
   window.addEventListener('focus', () => { if (S.unlocked && !S.black && D.unread[S.view] && focused()) { seen(S.view); Vault.save(); renderSidebar(); } });
@@ -1261,13 +1284,15 @@
     const q = r && t.selectionStart === t.selectionEnd ? (t.value.slice(0, t.selectionStart).match(/(?:^|[\s(])@([A-Za-z0-9_.]{0,24})$/) || [])[1] : undefined;
     pingOpts = q === undefined ? [] : pingCandidates(r).filter(id => nameOf(id).toLowerCase().startsWith(q.toLowerCase()))
       .sort((a, b) => (isOnline(b) - isOnline(a)) || nameOf(a).localeCompare(nameOf(b))).slice(0, 6);
+    if (q !== undefined && S.owner && (r.kind === 'general' || r.kind === 'ann') && 'everyone'.startsWith(q.toLowerCase())) pingOpts.unshift('everyone');
     if (pingSel >= pingOpts.length) pingSel = 0;
     $('pingList').classList.toggle('hidden', !pingOpts.length);
     $('pingList').replaceChildren(...pingOpts.map((id, i) => h('button', { class: 'ping-opt' + (i === pingSel ? ' on' : ''), role: 'option', tabindex: '-1', onmousedown: e => { e.preventDefault(); pickPing(id); } },
-      avatar(id, 'sm', true), h('span', { class: 'nm', text: nameOf(id) }), h('small', { text: isOnline(id) ? 'Online' : 'Offline' }))));
+      id === 'everyone' ? [h('span', { class: 'av sm group', style: '--h: 210' }, '@'), h('span', { class: 'nm', text: 'everyone' }), h('small', { text: 'Pings the whole network' })]
+        : [avatar(id, 'sm', true), h('span', { class: 'nm', text: nameOf(id) }), h('small', { text: isOnline(id) ? 'Online' : 'Offline' })])));
   }
   function pickPing(id) {
-    const t = $('msg'), pos = t.selectionStart, before = t.value.slice(0, pos).replace(/@[A-Za-z0-9_.]*$/, '@' + nameOf(id) + ' ');
+    const t = $('msg'), pos = t.selectionStart, before = t.value.slice(0, pos).replace(/@[A-Za-z0-9_.]*$/, '@' + (id === 'everyone' ? 'everyone' : nameOf(id)) + ' ');
     t.value = before + t.value.slice(pos);
     t.selectionStart = t.selectionEnd = before.length;
     closePings(); grow(); left(); t.focus();
@@ -1352,7 +1377,7 @@
     const more = [];
     if (!me && i) {
       more.push(h('button', { class: 'link', onclick: () => safety(id) }, 'Verify safety number'));
-      if (st === 'friend') more.push(h('button', { class: 'link', onclick: () => ask(`Remove ${nameOf(id)} as a friend?`, "You won't be able to message each other until one of you sends a new friend request.", 'Remove friend', () => friendAction('remove', id), true) }, 'Remove friend'));
+      if (st === 'friend') more.push(h('button', { class: 'link', onclick: () => askRemoveFriend(id) }, 'Remove friend'));
       if (!D.blocked[id]) more.push(h('button', { class: 'link danger', onclick: () => ask(`Block ${nameOf(id)}?`, "You won't see their messages anywhere, and they can't send you friend requests.", 'Block', () => block(id), true) }, 'Block'));
     }
     modal('', h('div', { class: 'profile' }, avatar(id, 'lg', true), h('h2', { text: nameOf(id) + (me ? ' (you)' : '') }),
@@ -1414,6 +1439,8 @@
       ? 'Nothing showed up? Open System Settings → Notifications → privatewebchat and turn on Allow notifications, and check Focus is off.'
       : 'Nothing showed up? Open Settings → System → Notifications, turn on notifications for privatewebchat, and check Do not disturb is off.');
     const testBtn = h('button', { class: 'link', onclick: () => { native.notify('privatewebchat', "Notifications are working. You'll get these while privatewebchat is in the background."); testNote.classList.remove('hidden'); } }, 'Send a test notification');
+    const hideBox = h('input', { type: 'checkbox', checked: !!st.hidden });
+    hideBox.onchange = () => { st.hidden = hideBox.checked; Vault.save(); wsSend({ t: 'hide', on: st.hidden }); };
     const startBox = h('input', { type: 'checkbox', checked: st.startup !== false });
     const startNote = h('div', { class: 'err' });
     startBox.onchange = async () => {
@@ -1476,6 +1503,9 @@
       h('label', { class: 'check' }, notifyBox, 'Desktop notifications for direct messages, group chats, mentions, announcements and friend requests while privatewebchat is in the background'),
       h('label', { class: 'check' }, previewBox, 'Show message text in notifications'),
       h('div', { class: 'row', style: 'margin-top:0.4rem' }, testBtn), testNote,
+
+      h('h3', { text: 'Privacy' }),
+      h('label', { class: 'check' }, hideBox, h('span', {}, "Don't list me under Everyone in this network", h('small', { class: 'hint', style: 'display:block;margin:0' }, 'People can still add you by typing your exact username, and you still see and write in General.'))),
 
       h('h3', { text: 'Startup' }),
       h('label', { class: 'check' }, startBox, h('span', {}, 'Open privatewebchat when you log in to your computer', h('small', { class: 'hint', style: 'display:block;margin:0' }, 'It opens to the PIN screen. Closing the window keeps it running for notifications.'))),

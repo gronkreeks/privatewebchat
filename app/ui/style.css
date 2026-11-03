@@ -365,3 +365,8 @@ pre.gif { font-family: var(--mono); font-size: 0.78rem; line-height: 1.2; color:
 /* A new version came out while privatewebchat was running */
 .upd-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem; padding: 0.5rem 0.6rem; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); font-size: 0.76rem; font-weight: 700; }
 .upd-bar .btn { padding: 0.35rem 0.7rem; font-size: 0.72rem; }
+
+/* Closing a conversation from the sidebar */
+.item .x { visibility: hidden; color: var(--faint); font-size: 1rem; line-height: 1; padding: 0 0.2rem; border-radius: var(--radius); }
+.item:hover .x { visibility: visible; }
+.item .x:hover { color: var(--danger); background: var(--hover); }

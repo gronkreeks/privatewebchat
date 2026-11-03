@@ -23,7 +23,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 
 - **General**, a chat for everyone
 - **Friends**, added by username
-- **Direct messages** with friends, deleted automatically after 24 hours
+- **Direct messages** with friends (remove a friend or close a conversation whenever you like)
 - **Group chats** with any of your friends
 - **Announcements**, news and patch notes from the developer (only the developer can post)
 - **Mentions**: type **@** and a name to ping someone; they get a notification, even in General
@@ -35,7 +35,7 @@ A small desktop chat app for a closed group of friends. You can't sign up: you n
 - **A PIN lock** every time you open the app
 - **A black-out key** that instantly turns the window black, until you type your PIN
 - **A wipe PIN** that erases everything on your computer
-- **Messages that only last while the server is running**: if the server goes offline, every message is deleted from everyone's computer
+- **Messages that last 24 hours**, then they're deleted from everyone's computer. Server restarts don't matter
 
 ## Getting in
 
@@ -75,9 +75,9 @@ Every message is encrypted on your computer before it's sent, and only the peopl
 
 Each message gets its own key, so no single message key unlocks a whole conversation. Everything the app saves on your computer is also encrypted with your PIN, and erased for good if you use the wipe PIN.
 
-## Messages disappear when the server goes offline
+## Messages last 24 hours
 
-Messages only last as long as the server keeps running. The server never stores them to begin with, and if it goes offline (a restart, an update, or the free hosting going to sleep after a quiet spell), every app deletes all its messages the next time it connects. That includes messages that hadn't been delivered yet. Your friends, groups and username are kept. A chat that never outlives the server can't be dug up later.
+Every message is deleted from everyone's computer 24 hours after it was sent, in General, group chats and DMs alike. The server never stores messages: it only passes them along, and if it restarts (an update, or the free hosting going to sleep after a quiet spell) before one is delivered, the sender's app sends it again once the server is back.
 
 If you send a message while the server is asleep, it shows **Connecting…**, the app wakes the server up (that can take up to a minute), and your message goes out as soon as it's back.
 
@@ -101,15 +101,15 @@ Change the look in **Settings → Appearance**. The default is **Kali**: black, 
 
 **I'm the developer. How do I get in?** The same way as everyone else: make yourself an invite code with `node tools/owner.js invite` and paste it into the app. It prints short codes (`PWC2.`) once the newest release reads them (1.1.6 and newer), and long ones (`PWC1.`) before that; `--long` always gives a long one, which every version reads. The owner key (`node tools/owner.js key`, the one starting with `B`) only goes in the server's settings on Render, and it isn't an invite code. Once you're in on the computer that holds the owner key, **Settings → Owner** makes invite codes for you, and you can post in **Announcements**.
 
-**Are announcements encrypted?** No. Everyone in the network reads them, so they're signed with the owner key instead: nobody else, including the server, can post one or change one. Unlike messages, they stay when the server goes offline.
+**Are announcements encrypted?** No. Everyone in the network reads them, so they're signed with the owner key instead: nobody else, including the server, can post one or change one. Unlike messages, they don't expire after 24 hours.
 
 **Can I change my username?** No. Usernames are permanent, so everyone knows who they're talking to.
 
 **Do I have to be friends with someone to talk to them?** Not in General. DMs and group chats are for friends only.
 
-**Can I keep a DM longer than 24 hours?** No. That's on purpose, for privacy. General and group chats are kept until the server goes offline.
+**Can I keep messages longer than 24 hours?** No. That's on purpose, for privacy.
 
-**Why did all my messages disappear?** The server went offline, so every message was deleted. That's on purpose too (see above).
+**Can I hide from the list of everyone in the network?** Yes: **Settings → Privacy → Don't list me**. People can still add you by typing your exact username.
 
 **How do I quit?** Closing the window keeps privatewebchat running so notifications still arrive. When you come back, it asks for your PIN. To quit for real, use the tray icon's menu on Windows, or **Quit** in the menu bar icon or Cmd+Q on Mac.
 

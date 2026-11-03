@@ -370,16 +370,17 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await background(maya, false);
   console.log('✓ notifications keep coming with the window closed to the tray; back takes the PIN');
 
-  // ── Direct messages disappear after 24 hours ──
+  // ── Messages disappear after 24 hours, in every chat ──
   await nav(maya, 'sam');
   assert(await maya.js(`return $('roomSub').textContent.includes('24 hours')`), 'DM header says 24 hours');
   assert(await maya.js(`return $('log').textContent.includes('Thanks for the invite')`), 'DM there before');
   await maya.js(`window.__realNow = Date.now; Date.now = () => window.__realNow() + 25 * 3600000; window.dispatchEvent(new Event('focus'))`);
   await maya.until(`!$('log').textContent.includes('Thanks for the invite')`, 'old DMs deleted');
-  await maya.js(`Date.now = window.__realNow`);
   await nav(maya, 'Weekend plans');
-  assert((await lastMsg(maya)).includes('see you there'), 'group messages are kept');
-  console.log('✓ direct messages are deleted after 24 hours; group chats are kept');
+  assert(!(await maya.js(`return $('log').textContent.includes('see you there')`)), 'old group messages deleted too');
+  await maya.js(`Date.now = window.__realNow`);
+  await maya.say('Perfect, see you there');
+  console.log('✓ messages are deleted after 24 hours, in every chat');
 
   // ── Announcements: the patch notes are there, only the owner can post, everyone reads ──
   await maya.js(`window.__ownerKey = ${JSON.stringify(owner.keys.sigPub)}; window.__ownerSecret = ${JSON.stringify(owner.keys.sigPriv)}`);
@@ -500,7 +501,7 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   release.tag = 'v' + VERSION;
   console.log('✓ a release that comes out while privatewebchat is running is offered, and installs from the sidebar');
 
-  // ── A server restart deletes every message, for everyone, including ones not yet delivered ──
+  // ── Messages last through a server restart, and one that hadn't been delivered still arrives ──
   await leo.reload();
   await leo.until(`!$('sUnlock').classList.contains('hidden')`, 'leo locked and offline');
   await nav(maya, 'General');
@@ -509,22 +510,19 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await stopRelay();
   await startRelay(owner.keys.sigPub);
   await online(maya);
-  await maya.until(`$('log').textContent.includes('The server went offline')`, 'maya sees the clear notice');
-  assert(!(await maya.js(`return $('log').textContent.includes('Sent while leo was away')`)), 'maya\'s copy is gone');
+  assert(await maya.js(`return $('log').textContent.includes('Sent while leo was away')`), 'maya\'s messages are kept');
   await nav(maya, 'Weekend plans');
-  assert(!(await maya.js(`return $('log').textContent.includes('see you there')`)), 'group history is gone');
+  assert(await maya.js(`return $('log').textContent.includes('see you there')`), 'group history is kept');
   await nav(maya, 'Announcements');
   assert(await maya.js(`return $('log').textContent.includes('Server maintenance')`), 'announcements are kept through a restart');
   await leo.fill('#unlockPin', '2468');
   await leo.click('#unlockGo');
   await online(leo);
   await nav(leo, 'General');
-  await leo.until(`$('log').textContent.includes('The server went offline')`, 'leo sees the clear notice');
-  await sleep(1500);
-  assert(!(await leo.js(`return $('log').textContent.includes('Sent while leo was away')`)), 'undelivered message is not resent');
+  await leo.until(`$('log').textContent.includes('Sent while leo was away')`, 'the message the restart lost reaches leo', 45000);
   await tab(maya, 'all'); await nav(maya, 'Friends');
   assert(await maya.js(`return $('friendsBody').textContent.includes('leo')`), 'friends survive');
-  console.log('✓ a server restart deletes every message for everyone; friends are kept');
+  console.log('✓ messages last through a server restart, and one the restart lost still arrives');
 
   // ── Sending while the server is down says "Connecting…", wakes it, and sends once it's back ──
   await nav(sam, 'General'); await nav(maya, 'General');
@@ -538,7 +536,7 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await startRelay(owner.keys.sigPub);
   await online(maya);
   await maya.until(`!document.querySelector('#log .m.pending')`, 'sent once the server is back');
-  assert(await maya.js(`return $('log').textContent.includes('The server went offline') && $('log').textContent.includes('Typed while the server was asleep')`), 'kept through the restart');
+  assert(await maya.js(`return $('log').textContent.includes('Typed while the server was asleep')`), 'kept through the restart');
   await sam.until(`$('log').textContent.includes('Typed while the server was asleep')`, 'sam gets it', 45000);
   console.log('✓ a message sent while the server is down waits as "Connecting…" and goes out when it is back');
 
@@ -589,6 +587,48 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await online(spk);
   await maya.until(`Object.keys(Vault.data.dir).length && [...Object.values(Vault.data.dir)].some(c => c.m.name === 'ravi')`, 'maya sees ravi join');
   console.log('✓ a 12-digit code said out loud gets someone in');
+
+  // ── @everyone: the owner can ping the whole network; anyone else's @everyone is just text ──
+  await nav(maya, 'General');
+  await maya.until(`!$('composer').classList.contains('hidden')`, 'General');
+  await sleep(300);
+  await background(sam, true);
+  await maya.fill('#msg', '@ev');
+  await maya.until(`$('pingList').textContent.includes('everyone')`, '@everyone suggested to the owner');
+  await maya.js(`$('msg').dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))`);
+  await maya.fill('#msg', '@everyone the server restarts at 9');
+  await maya.js(`$('msg').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))`);
+  await sam.until(`window.__notes.some(n => n.title === 'maya mentioned @everyone in General')`, 'everyone notified');
+  await nav(sam, 'General');
+  await sam.until(`[...document.querySelectorAll('#log .m.pinged')].some(m => m.textContent.includes('restarts at 9'))`, '@everyone highlighted');
+  await background(sam, false);
+  await background(maya, true);
+  await sam.fill('#msg', '@ev');
+  await sleep(300);
+  assert(!(await sam.js(`return $('pingList').textContent.includes('everyone')`)), 'not suggested to anyone else');
+  await sam.say('@everyone free pizza');
+  await sleep(1500);
+  assert(!(await maya.js(`return window.__notes.some(n => n.title.includes('@everyone') && n.title.startsWith('sam'))`)), "someone else's @everyone pings nobody");
+  await background(maya, false);
+  console.log('✓ @everyone pings the whole network, only when the owner writes it');
+
+  // ── Closing a conversation, removing a friend, and not being listed ──
+  await nav(maya, 'sam');
+  await maya.click('#roomClose');
+  await maya.clickText('Close');
+  await maya.until(`![...document.querySelectorAll('#inbox .nm')].some(n => n.textContent === 'sam')`, 'conversation closed');
+  await nav(maya, 'Friends'); await tab(maya, 'all');
+  await rowAction(maya, 'leo', 'Remove');
+  await maya.clickText('Remove friend');
+  await maya.until(`![...document.querySelectorAll('#friendsBody .who b')].some(b => b.textContent === 'leo')`, 'leo removed as a friend');
+  await nav(leo, 'Friends'); await tab(leo, 'all');
+  await leo.until(`![...document.querySelectorAll('#friendsBody .who b')].some(b => b.textContent === 'maya')`, 'and leo sees it too');
+  await leo.click('#settingsBtn');
+  await leo.js(`[...document.querySelectorAll('#modalCard label.check')].find(l => l.textContent.includes("Don't list me")).querySelector('input').click()`);
+  await leo.clickText('Close');
+  await nav(sam, 'Friends'); await tab(sam, 'add');
+  await sam.until(`!$('friendsBody').textContent.includes('leo')`, 'leo not listed under Everyone');
+  console.log('✓ conversations close, friends can be removed, and people can choose not to be listed');
 
   // ── Usernames are unique ──
   const dup = await newPage('dup');

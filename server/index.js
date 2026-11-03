@@ -3,10 +3,10 @@
 // sees message text, room names or who is in which room: only who an envelope is from and to.
 // Membership is proven with certificates that members' apps hold (app/ui/protocol.js), so
 // the server keeps nothing on disk. Members' apps re-upload what it needs when they connect.
-// Messages only last while the server is running: a restart drops every queued envelope, and the
-// apps delete their copies when they see the new boot id. Set DATA_DIR to a Render disk to keep the
-// member list across restarts (never the queues). Announcements are the exception to messages lasting
-// only while it runs: they're signed by the owner, not encrypted, and the apps hand them back after a restart.
+// A restart drops every queued envelope; the apps see the new boot id and send again whatever wasn't
+// confirmed (messages last 24 hours on everyone's computer). Set DATA_DIR to a Render disk to keep the
+// member list across restarts (never the queues). Announcements are signed by the owner, not encrypted,
+// and the apps hand them back after a restart.
 'use strict';
 const http = require('http');
 const fs = require('fs');
@@ -44,8 +44,8 @@ const SITE = 'unblockedarcade.org';
 const tooOld = name => `privatewebchat 1.1.4 and older won't work anymore unless you download the new version (${latest}). Get it from ${SITE} (Download for Mac or Windows) and open it. You'll still be ${name}, with the same PIN and friends, so you don't need an invite code. After this it updates itself.`;
 // Apps older than MIN_VERSION are turned away too, once it's released, with a banner saying how to
 // update. 1.1.9 is the first that also looks for updates while it's running (closed to the tray it can
-// run for days), so older ones can miss every update.
-const MIN_VERSION = (process.env.MIN_VERSION || '1.1.9').split('.').map(Number);
+// run for days), so older ones can miss every update; 1.2.0 keeps messages through restarts.
+const MIN_VERSION = (process.env.MIN_VERSION || '1.2.0').split('.').map(Number);
 const vnum = s => String(s).split('.').map(n => parseInt(n, 10) || 0);
 const below = (a, b) => { for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0); return false; };
 const outdated = (v, name) => `This privatewebchat (${v}) is out of date. Quit it (right-click its icon in the tray or menu bar → Quit) and open it again: it updates itself to ${latest}. If it doesn't, download it from ${SITE}. You'll still be ${name}, with the same PIN and friends.`;
@@ -230,10 +230,15 @@ async function handle(ws, m) {
     const old = online.get(info.id);
     if (old && old !== ws) { send(old, { t: 'replaced' }); old.close(4001, 'replaced'); }
     ws.member = info; online.set(info.id, ws);
+    // "Don't list me under Everyone": only a display preference, so the server just passes it on
+    const x = members.get(info.id), wasHidden = !!x.hidden;
+    x.hidden = !!m.hidden;
     send(ws, {
       t: 'welcome', id: info.id, dir: [...members.values()].map(x => x.cert),
       removals: removals.v ? removals : null, online: [...online.keys()], ann: [...anns.values()], spoken: liveSpoken(),
+      hidden: [...members.values()].filter(y => y.hidden).map(y => y.info.id),
     });
+    if (x.hidden !== wasHidden) broadcast({ t: 'hidden', id: info.id, on: x.hidden }, info.id);
     broadcast({ t: 'presence', id: info.id, on: true }, info.id);
     const t0 = now();
     for (const env of queues.get(info.id) || []) if (live(env, t0)) send(ws, env);
@@ -254,6 +259,13 @@ async function handle(ws, m) {
       break;
     }
     case 'ack': ack(me.id, m.eids); break;
+    case 'hide': {
+      const x = members.get(me.id);
+      if (!x || x.hidden === !!m.on) break;
+      x.hidden = !!m.on;
+      broadcast({ t: 'hidden', id: me.id, on: x.hidden }, me.id);
+      break;
+    }
   }
 }
 function deny(ws, msg, why) { send(ws, { t: 'denied', msg, why }); ws.close(4000, why); }

@@ -32,7 +32,7 @@ function client(keys, cert, opts = {}) {
       const m = JSON.parse(e.data);
       if (m.t === 'hello') {
         if (opts.owner) c.send({ t: 'owner', sig: await P.sign(keys.sigPriv, ['pwc-owner', m.nonce]) });
-        else c.send({ t: 'auth', v: opts.v === undefined ? '1.1.5' : opts.v, cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null, ann: opts.ann, spoken: opts.spoken });
+        else c.send({ t: 'auth', v: opts.v === undefined ? '1.2.0' : opts.v, cert, sig: await P.sign(keys.sigPriv, ['pwc-auth', m.nonce]), dir: opts.dir || [], removals: opts.removals || null, ann: opts.ann, spoken: opts.spoken });
         return;
       }
       const w = c.waiters.findIndex(x => x.t === m.t);
@@ -99,6 +99,14 @@ const last = c => c.got.pop();
   await sleep(1300);
   const b4 = await client(bob, bc); await sleep(300);
   assert(!b4.got.some(m => m.t === 'env'), 'expired envelope not delivered');
+
+  // "Don't list me": passed on to everyone, and in the welcome for apps that connect later
+  b4.send({ t: 'hide', on: true });
+  assert.deepStrictEqual(await e.next('hidden'), { t: 'hidden', id: bid, on: true }, 'others told bob is hidden');
+  const e2 = await client(eve, (await P.acceptInvite(invE, eve, 'eve')));
+  assert.deepStrictEqual(last(e2).hidden, [bid], 'welcome lists who is hidden');
+  b4.send({ t: 'hide', on: false });
+  assert.strictEqual((await e2.next('hidden')).on, false, 'and when they show again');
 
   // Owner requests: the member list needs the owner key; removals need no login, only the owner's signature
   assert.strictEqual(last(await client(alice, ac, { owner: true })).why, 'owner', 'member cannot list as owner');
@@ -186,13 +194,13 @@ const last = c => c.got.pop();
   assert.strictEqual(denied.why, 'outdated', 'old app turned away once 1.1.5 is out');
   assert(denied.msg.includes("1.1.4 and older won't work anymore unless you download the new version (1.1.5)") && denied.msg.includes("You'll still be bob") && denied.msg.includes('unblockedarcade.org'), 'and told where to get it, as who');
   assert.strictEqual(last(await client(bob, bc)).t, 'welcome', 'a new app is let in');
-  // Once 1.1.9 is out, apps older than it are told to quit and reopen to update; 1.1.9 is let in
-  newest.tag = 'v1.1.9';
+  // Once 1.2.0 is out, apps older than it are told to quit and reopen to update; 1.2.0 is let in
+  newest.tag = 'v1.2.0';
   srv.kill(); await sleep(300);
   await startServer(ok.sigPub, relUrl); await sleep(400);
   const stale = last(await client(bob, bc, { v: '1.1.5', dir: [bc, cc], removals: rem }));
-  assert(stale.why === 'outdated' && stale.msg.includes('(1.1.5) is out of date') && stale.msg.includes('updates itself to 1.1.9') && stale.msg.includes('unblockedarcade.org'), 'older app told how to update');
-  assert.strictEqual(last(await client(bob, bc, { v: '1.1.9' })).t, 'welcome', '1.1.9 is let in');
+  assert(stale.why === 'outdated' && stale.msg.includes('(1.1.5) is out of date') && stale.msg.includes('updates itself to 1.2.0') && stale.msg.includes('unblockedarcade.org'), 'older app told how to update');
+  assert.strictEqual(last(await client(bob, bc, { v: '1.2.0' })).t, 'welcome', '1.2.0 is let in');
   releases.close();
 
   // The removal list published in the repository is loaded when the server starts, so a removed member
