@@ -46,7 +46,7 @@ function serveUi() {
 let relay = null;
 function startRelay(owner) {
   return new Promise(res => {
-    relay = spawn('node', [path.join(ROOT, 'server/index.js')], { env: { ...process.env, PORT: RELAY_PORT, OWNER_KEY: owner, RELEASES_URL: '' } });
+    relay = spawn('node', [path.join(ROOT, 'server/index.js')], { env: { ...process.env, PORT: RELAY_PORT, OWNER_KEY: owner, RELEASES_URL: '', REMOVALS_URL: '' } });
     procs.push(relay);
     relay.stdout.on('data', d => { if (String(d).includes('privatewebchat relay on port')) res(); });
   });
@@ -490,6 +490,15 @@ const background = (p, on) => p.js(`if (${on}) document.hasFocus = () => false; 
   await upd.until(`!$('sWelcome').classList.contains('hidden')`, 'opens normally after a failed update');
   release.tag = 'v' + VERSION;
   console.log('✓ opening privatewebchat installs a newer release first, with its patch notes; a failed update still opens');
+  // A release that comes out while privatewebchat is running is offered in the sidebar
+  release.tag = 'v9.9.9';
+  await maya.js(`window.__installed = false; window.__realNow2 = Date.now; Date.now = () => window.__realNow2() + 2 * 3600000; window.dispatchEvent(new Event('focus'))`);
+  await maya.until(`!$('updBar').classList.contains('hidden') && $('updBarText').textContent.includes('9.9.9')`, 'update offered while running');
+  await maya.click('#updBarGo');
+  await maya.until(`window.__installed && window.__update === 'v9.9.9'`, 'update installed from the sidebar');
+  await maya.js(`Date.now = window.__realNow2; $('updBar').classList.add('hidden'); $('sUpdate').classList.add('hidden'); $('sMain').classList.remove('hidden')`);
+  release.tag = 'v' + VERSION;
+  console.log('✓ a release that comes out while privatewebchat is running is offered, and installs from the sidebar');
 
   // ── A server restart deletes every message, for everyone, including ones not yet delivered ──
   await leo.reload();

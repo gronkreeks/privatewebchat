@@ -28,6 +28,16 @@ const AUTH_TIMEOUT_MS = 20000;
 // updates itself is out (the server asks GitHub every half hour), they're turned away with a message
 // saying where to get it, which shows as a banner across the top of the old app. Until then they're let in.
 const RELEASES_URL = process.env.RELEASES_URL ?? 'https://api.github.com/repos/gronkreeks/privatewebchat/releases/latest';
+// The owner's removal list, published in the repository by tools/owner.js remove. Loaded at start and
+// every 10 minutes, so removals hold even after a restart with nobody online to hand the list back.
+const REMOVALS_URL = process.env.REMOVALS_URL ?? 'https://raw.githubusercontent.com/gronkreeks/privatewebchat/main/removals.json';
+async function fetchRemovals() {
+  if (!REMOVALS_URL || !ownerOk) return;
+  try {
+    const r = await fetch(REMOVALS_URL, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+    if (r.ok) await applyRemovals(await r.json());
+  } catch { }
+}
 const SELF_UPDATING = [1, 1, 5];
 let latest = null;   // the newest release's version, once it updates itself
 const tooOld = name => `privatewebchat 1.1.4 and older won't work anymore unless you download the new version (${latest}). Get it from github.com/gronkreeks/privatewebchat/releases/latest and open it. You'll still be ${name}, with the same PIN and friends, so you don't need an invite code. After this it updates itself.`;
@@ -311,4 +321,5 @@ setInterval(() => {
 
 checkLatest();
 setInterval(checkLatest, 30 * 60000).unref();
-load().then(() => server.listen(PORT, () => log(`privatewebchat relay on port ${PORT}${ownerOk ? '' : ' (not set up: OWNER_KEY is missing)'}`)));
+setInterval(fetchRemovals, 10 * 60000).unref();
+load().then(fetchRemovals).then(() => server.listen(PORT, () => log(`privatewebchat relay on port ${PORT}${ownerOk ? '' : ' (not set up: OWNER_KEY is missing)'}`)));

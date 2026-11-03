@@ -361,3 +361,7 @@ pre.gif { font-family: var(--mono); font-size: 0.78rem; line-height: 1.2; color:
 
 /* A spoken invite code, big enough to read out */
 .box.big-code { margin-top: 0.7rem; font-size: 1.5rem; letter-spacing: 3px; text-align: center; color: var(--text); }
+
+/* A new version came out while privatewebchat was running */
+.upd-bar { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem; padding: 0.5rem 0.6rem; border: 1px solid var(--accent); border-radius: var(--radius); background: var(--accent-soft); font-size: 0.76rem; font-weight: 700; }
+.upd-bar .btn { padding: 0.35rem 0.7rem; font-size: 0.72rem; }

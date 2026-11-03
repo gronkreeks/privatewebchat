@@ -11,9 +11,9 @@ let srv;
 // Stands in for GitHub's newest-release API; RELEASES_URL is empty (no checking) unless a test sets it
 const newest = { tag: 'v1.1.4' };
 const releases = http.createServer((req, rsp) => { rsp.writeHead(200, { 'Content-Type': 'application/json' }); rsp.end(JSON.stringify({ tag_name: newest.tag })); });
-function startServer(owner, releasesUrl = '') {
+function startServer(owner, releasesUrl = '', removalsUrl = '') {
   return new Promise(res => {
-    srv = spawn('node', [path.join(__dirname, '../server/index.js')], { env: { ...process.env, PORT, OWNER_KEY: owner, RELEASES_URL: releasesUrl } });
+    srv = spawn('node', [path.join(__dirname, '../server/index.js')], { env: { ...process.env, PORT, OWNER_KEY: owner, RELEASES_URL: releasesUrl, REMOVALS_URL: removalsUrl } });
     srv.stdout.on('data', d => { if (String(d).includes('privatewebchat relay on port')) res(); });
     srv.stderr.on('data', d => process.stderr.write('SERVER: ' + d));
   });
@@ -187,6 +187,16 @@ const last = c => c.got.pop();
   assert(denied.msg.includes("1.1.4 and older won't work anymore unless you download the new version (1.1.5)") && denied.msg.includes("You'll still be bob") && denied.msg.includes('releases/latest'), 'and told where to get it, as who');
   assert.strictEqual(last(await client(bob, bc)).t, 'welcome', 'a new app is let in');
   releases.close();
+
+  // The removal list published in the repository is loaded when the server starts, so a removed member
+  // stays out after a restart even with nobody online to hand the list back
+  const published = await P.signRemovals(ok, Date.now(), [bid]);
+  const repo = http.createServer((req, rsp) => { rsp.writeHead(200, { 'Content-Type': 'application/json' }); rsp.end(JSON.stringify(published)); });
+  await new Promise(r => repo.listen(0, '127.0.0.1', r));
+  srv.kill(); await sleep(300);
+  await startServer(ok.sigPub, '', `http://127.0.0.1:${repo.address().port}/removals.json`); await sleep(300);
+  assert.strictEqual(last(await client(bob, bc)).why, 'member', 'removed member refused after a restart, from the published list');
+  repo.close();
 
   // A server without OWNER_KEY
   srv.kill(); await sleep(300);

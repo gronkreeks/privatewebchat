@@ -192,6 +192,11 @@
     if (typeof window.pwc_update !== 'function') return false;
     const rel = await release('latest');
     if (!rel || !newer(rel.version, PwcConfig.VERSION)) return false;
+    return installUpdate(rel);
+  }
+  // Shows the patch notes while it downloads and installs. true: privatewebchat is quitting for the new
+  // version; false: it couldn't, and Continue was clicked.
+  async function installUpdate(rel) {
     $('updTitle').textContent = `Updating to privatewebchat ${rel.version}`;
     $('updStatus').textContent = 'Downloading… privatewebchat will open again by itself in a moment.';
     $('updNotes').replaceChildren(h('h3', { text: "What's new" }), ...notesView(rel.notes));
@@ -212,6 +217,23 @@
     await new Promise(res => { $('updSkip').onclick = res; });
     return false;
   }
+  // Closed to the tray, privatewebchat can run for days without opening again, so while it's running it
+  // also looks for a new version every few hours and when you come back to it, and offers it in the
+  // sidebar. It never opens its own window to update.
+  let lastCheck = Date.now(), offered = null;
+  async function laterUpdate() {
+    if (!S.unlocked || typeof window.pwc_update !== 'function' || Date.now() - lastCheck < 3600000) return;
+    lastCheck = Date.now();
+    const rel = await release('latest');
+    if (!rel || !newer(rel.version, PwcConfig.VERSION)) return;
+    offered = rel;
+    $('updBarText').textContent = `privatewebchat ${rel.version} is out`;
+    $('updBar').classList.remove('hidden');
+  }
+  setInterval(laterUpdate, 3 * 3600000);
+  window.addEventListener('focus', laterUpdate);
+  $('updBarGo').onclick = async () => { if (offered && !(await installUpdate(offered))) show('sMain'); };
+
   // Each version's patch notes are posted in Announcements, and after an update the first unlock shows them
   async function whatsNew() {
     const seen = D.settings.seenVersion, id = 'rel-v' + PwcConfig.VERSION;
@@ -441,7 +463,7 @@
     D.removals = ok; S.removed = new Set(ok.ids);
     for (const [id, info] of Object.entries(S.info)) {
       if (!P.isRemoved(info, S.removed)) continue;
-      if (id === D.me) { stopNet(); return gone('You were removed from this network', 'The owner removed you, so you can no longer send or receive messages here.'); }
+      if (id === D.me) { stopNet(); Vault.save(); return gone('You were removed from this network', 'The owner removed you, so you can no longer send or receive messages here.'); }
       delete S.info[id]; delete D.dir[id]; delete D.friends[id];
     }
     Vault.save();

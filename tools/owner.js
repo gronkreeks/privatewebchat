@@ -13,7 +13,7 @@
 //                                             stand for an invite code (default 1, valid 7 days)
 //   node tools/owner.js spoken <code>         make a spoken code for an invite code you already have
 //   node tools/owner.js members               list everyone on the server
-//   node tools/owner.js remove <username>     remove someone from the server
+//   node tools/owner.js remove <username>     remove someone from the server (--all: everyone)
 //   node tools/owner.js announce <file|text>  post in Announcements (Markdown: # headings, - bullets)
 //
 // Needs Node 22+. Talks to the server in app/ui/config.js (or the SERVER environment variable).
@@ -46,6 +46,24 @@ async function released(v) {
 }
 const shortReleased = () => released([1, 1, 6]);
 const encodeInvite = inv => 'PWC1.' + Buffer.from(JSON.stringify(inv)).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+// The removal list also lives in this repository (removals.json, signed like everything else), and the
+// server loads it whenever it starts. Otherwise a restart with nobody left online to hand the list back
+// would let removed people in again. Pushes it with git when this is the repository's folder.
+function publishRemovals(r) {
+  const root = process.env.PWC_PUBLISH_DIR || path.join(__dirname, '..'), file = path.join(root, 'removals.json');
+  fs.writeFileSync(file, JSON.stringify(r) + '\n');
+  const { execFileSync } = require('child_process');
+  const git = (...a) => execFileSync('git', ['-C', root, ...a], { stdio: 'pipe' });
+  try {
+    git('add', 'removals.json');
+    git('commit', '-m', 'Removal list', '--', 'removals.json');
+    git('push', 'origin', 'HEAD');
+    console.log('Published the removal list (removals.json), so it holds even after the server restarts.');
+  } catch (e) {
+    console.error(`Couldn't publish removals.json by itself. Push it, so removals hold after a server restart:\n  cd ${root} && git add removals.json && git commit -m 'Removal list' && git push`);
+  }
+}
 
 // Opens a connection, proves we hold the owner key, and returns the member list and removals
 function ownerSession(owner) {
@@ -156,17 +174,25 @@ async function members(owner, session) {
     // Apps only take a removal list newer than the one they have, and the server forgets its list when it
     // restarts (the apps give it back). So the list is numbered by the time, never by the server's count,
     // and it always includes everyone removed before, kept in removed.json beside the owner key.
+    // --all removes everyone the server knows, after typing yes (or with --yes)
     const owner = load();
-    const name = (args[0] || '').toLowerCase();
-    if (!name) die('Usage: node tools/owner.js remove <username>');
+    const all = args.includes('--all'), name = (args.find(a => !a.startsWith('--')) || '').toLowerCase();
+    if (!name && !all) die('Usage: node tools/owner.js remove <username>   or   node tools/owner.js remove --all');
     const s = await ownerSession(owner);
-    const target = (await members(owner, s)).find(i => i.name.toLowerCase() === name);
-    if (!target) { s.ws.close(); die(`Nobody called ${args[0]} is on the server. After a restart it only knows people whose app has connected since (or whose friends' apps have): try again when more people are online.`); }
+    const everyone = await members(owner, s);
+    const targets = all ? everyone : everyone.filter(i => i.name.toLowerCase() === name);
+    if (!targets.length) { s.ws.close(); die(all ? 'Nobody is on the server.' : `Nobody called ${name} is on the server. After a restart it only knows people whose app has connected since (or whose friends' apps have): try again when more people are online.`); }
+    if (all && !args.includes('--yes')) {
+      console.log(`This removes all ${targets.length} people the server knows: ${targets.map(i => i.name).join(', ')}`);
+      console.log("They're disconnected, disappear for everyone, and can only come back with a new invite.");
+      const answer = await new Promise(res => require('readline').createInterface({ input: process.stdin, output: process.stdout }).question('Type yes to remove them all: ', a => res(a)));
+      if (answer.trim().toLowerCase() !== 'yes') { s.ws.close(); die('Nothing was removed.'); }
+    }
     const REMOVED = path.join(DIR, 'removed.json');
     let mine = { v: 0, ids: [] };
     try { mine = JSON.parse(fs.readFileSync(REMOVED, 'utf8')); } catch (e) { }
     const prev = s.removals || { v: 0, ids: [] };
-    const ids = [...new Set([...prev.ids, ...mine.ids, target.id])];
+    const ids = [...new Set([...prev.ids, ...mine.ids, ...targets.map(i => i.id)])];
     const v = Math.max(Date.now(), prev.v + 1, mine.v + 1);
     s.ws.send(JSON.stringify({ t: 'removals', removals: await P.signRemovals(owner.keys, v, ids) }));
     await new Promise(res => setTimeout(res, 1000));
@@ -175,8 +201,11 @@ async function members(owner, session) {
     // Check that it took
     const c = await ownerSession(owner);
     c.ws.close();
-    if (!c.removals || c.removals.v !== v || (await members(owner, c)).some(i => i.id === target.id)) die(`The server didn't take the removal of ${target.name}. Try again.`);
-    console.log(`Removed ${target.name}. They've been disconnected and their invite no longer works.`);
+    const left = (await members(owner, c)).filter(i => targets.some(x => x.id === i.id));
+    if (!c.removals || c.removals.v !== v || left.length) die(`The server didn't take the removal of ${(left.length ? left : targets).map(i => i.name).join(', ')}. Try again.`);
+    console.log(all ? `Removed all ${targets.length}. They've been disconnected and their invites no longer work.\nAnyone the server didn't know about (it only knows people seen since it last restarted) can be removed when they show up: run this again later.`
+      : `Removed ${targets[0].name}. They've been disconnected and their invite no longer works.`);
+    publishRemovals({ v, ids, s: c.removals.s });
   } else {
     console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 18).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
   }
