@@ -61,8 +61,14 @@ function open(onHello) {
   // Tidy up: remove the two test members
   const o = await open(async (c, m) => c.send({ t: 'owner', sig: await P.sign(owner.keys.sigPriv, ['pwc-owner', m.nonce]) }));
   const dir = await o.next('owner_dir');
-  const prev = dir.removals || { v: 0, ids: [] };
-  o.send({ t: 'removals', removals: await P.signRemovals(owner.keys, prev.v + 1, [...new Set([...prev.ids, a.id, b.id])]) });
+  // Numbered by the time and keeping everyone removed before, like tools/owner.js remove, so this can
+  // never undo a removal
+  const prev = dir.removals || { v: 0, ids: [] }, REMOVED = path.join(path.dirname(FILE), 'removed.json');
+  let mine = { v: 0, ids: [] };
+  try { mine = JSON.parse(fs.readFileSync(REMOVED, 'utf8')); } catch (e) { }
+  const v = Math.max(Date.now(), prev.v + 1, mine.v + 1), ids = [...new Set([...prev.ids, ...mine.ids, a.id, b.id])];
+  o.send({ t: 'removals', removals: await P.signRemovals(owner.keys, v, ids) });
+  fs.writeFileSync(REMOVED, JSON.stringify({ v, ids }), { mode: 0o600 });
   await a.c.next('removed');
   step('test members removed');
   for (const x of [a.c, b.c, o]) x.ws.close();
