@@ -184,8 +184,15 @@ const last = c => c.got.pop();
   await startServer(ok.sigPub, relUrl); await sleep(400);
   const denied = last(await client(bob, bc, { v: null, dir: [bc, cc], removals: rem }));
   assert.strictEqual(denied.why, 'outdated', 'old app turned away once 1.1.5 is out');
-  assert(denied.msg.includes("1.1.4 and older won't work anymore unless you download the new version (1.1.5)") && denied.msg.includes("You'll still be bob") && denied.msg.includes('releases/latest'), 'and told where to get it, as who');
+  assert(denied.msg.includes("1.1.4 and older won't work anymore unless you download the new version (1.1.5)") && denied.msg.includes("You'll still be bob") && denied.msg.includes('unblockedarcade.org'), 'and told where to get it, as who');
   assert.strictEqual(last(await client(bob, bc)).t, 'welcome', 'a new app is let in');
+  // Once 1.1.9 is out, apps older than it are told to quit and reopen to update; 1.1.9 is let in
+  newest.tag = 'v1.1.9';
+  srv.kill(); await sleep(300);
+  await startServer(ok.sigPub, relUrl); await sleep(400);
+  const stale = last(await client(bob, bc, { v: '1.1.5', dir: [bc, cc], removals: rem }));
+  assert(stale.why === 'outdated' && stale.msg.includes('(1.1.5) is out of date') && stale.msg.includes('updates itself to 1.1.9') && stale.msg.includes('unblockedarcade.org'), 'older app told how to update');
+  assert.strictEqual(last(await client(bob, bc, { v: '1.1.9' })).t, 'welcome', '1.1.9 is let in');
   releases.close();
 
   // The removal list published in the repository is loaded when the server starts, so a removed member

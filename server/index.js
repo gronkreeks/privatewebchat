@@ -40,7 +40,15 @@ async function fetchRemovals() {
 }
 const SELF_UPDATING = [1, 1, 5];
 let latest = null;   // the newest release's version, once it updates itself
-const tooOld = name => `privatewebchat 1.1.4 and older won't work anymore unless you download the new version (${latest}). Get it from github.com/gronkreeks/privatewebchat/releases/latest and open it. You'll still be ${name}, with the same PIN and friends, so you don't need an invite code. After this it updates itself.`;
+const SITE = 'unblockedarcade.org';
+const tooOld = name => `privatewebchat 1.1.4 and older won't work anymore unless you download the new version (${latest}). Get it from ${SITE} (Download for Mac or Windows) and open it. You'll still be ${name}, with the same PIN and friends, so you don't need an invite code. After this it updates itself.`;
+// Apps older than MIN_VERSION are turned away too, once it's released, with a banner saying how to
+// update. 1.1.9 is the first that also looks for updates while it's running (closed to the tray it can
+// run for days), so older ones can miss every update.
+const MIN_VERSION = (process.env.MIN_VERSION || '1.1.9').split('.').map(Number);
+const vnum = s => String(s).split('.').map(n => parseInt(n, 10) || 0);
+const below = (a, b) => { for (let i = 0; i < 3; i++) if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) < (b[i] || 0); return false; };
+const outdated = (v, name) => `This privatewebchat (${v}) is out of date. Quit it (right-click its icon in the tray or menu bar → Quit) and open it again: it updates itself to ${latest}. If it doesn't, download it from ${SITE}. You'll still be ${name}, with the same PIN and friends.`;
 async function checkLatest() {
   if (!RELEASES_URL) return;
   try {
@@ -216,6 +224,7 @@ async function handle(ws, m) {
     if (info.why === 'name') return deny(ws, 'That username is already taken.', 'name');
     if (info.why) return deny(ws, "This device isn't a member of this network. It may have been removed, or its invite was already used.", 'member');
     if (typeof m.v !== 'string' && latest) return deny(ws, tooOld(info.name), 'outdated');
+    if (typeof m.v === 'string' && latest && !below(vnum(latest), MIN_VERSION) && below(vnum(m.v), MIN_VERSION)) return deny(ws, outdated(m.v, info.name), 'outdated');
     if (ws.readyState !== 1) return;
     clearTimeout(ws.authT);
     const old = online.get(info.id);
