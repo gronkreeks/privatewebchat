@@ -153,17 +153,29 @@ async function members(owner, session) {
     if (!list.length) console.log('Nobody has joined yet.');
     for (const i of list) console.log(`${s.online.has(i.id) ? '●' : '○'} ${i.name}`);
   } else if (cmd === 'remove') {
+    // Apps only take a removal list newer than the one they have, and the server forgets its list when it
+    // restarts (the apps give it back). So the list is numbered by the time, never by the server's count,
+    // and it always includes everyone removed before, kept in removed.json beside the owner key.
     const owner = load();
     const name = (args[0] || '').toLowerCase();
     if (!name) die('Usage: node tools/owner.js remove <username>');
     const s = await ownerSession(owner);
     const target = (await members(owner, s)).find(i => i.name.toLowerCase() === name);
-    if (!target) { s.ws.close(); die(`Nobody called ${args[0]} is on the server.`); }
+    if (!target) { s.ws.close(); die(`Nobody called ${args[0]} is on the server. After a restart it only knows people whose app has connected since (or whose friends' apps have): try again when more people are online.`); }
+    const REMOVED = path.join(DIR, 'removed.json');
+    let mine = { v: 0, ids: [] };
+    try { mine = JSON.parse(fs.readFileSync(REMOVED, 'utf8')); } catch (e) { }
     const prev = s.removals || { v: 0, ids: [] };
-    const r = await P.signRemovals(owner.keys, prev.v + 1, [...new Set([...prev.ids, target.id])]);
-    s.ws.send(JSON.stringify({ t: 'removals', removals: r }));
-    await new Promise(res => setTimeout(res, 500));
+    const ids = [...new Set([...prev.ids, ...mine.ids, target.id])];
+    const v = Math.max(Date.now(), prev.v + 1, mine.v + 1);
+    s.ws.send(JSON.stringify({ t: 'removals', removals: await P.signRemovals(owner.keys, v, ids) }));
+    await new Promise(res => setTimeout(res, 1000));
     s.ws.close();
+    fs.writeFileSync(REMOVED, JSON.stringify({ v, ids }), { mode: 0o600 });
+    // Check that it took
+    const c = await ownerSession(owner);
+    c.ws.close();
+    if (!c.removals || c.removals.v !== v || (await members(owner, c)).some(i => i.id === target.id)) die(`The server didn't take the removal of ${target.name}. Try again.`);
     console.log(`Removed ${target.name}. They've been disconnected and their invite no longer works.`);
   } else {
     console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 18).map(l => l.replace(/^\/\/ ?/, '')).join('\n'));
